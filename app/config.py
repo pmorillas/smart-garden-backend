@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # OTA — URL accessible des de l'ESP32 per descarregar els binaris
     ota_base_url: str = "http://localhost:8000"
 
+    # Timezone local per avaluar els programes horaris (IANA, p.ex. "Europe/Madrid")
+    local_tz: str = "Europe/Madrid"
+
     # Web Push (VAPID)
     vapid_public_key: str = ""
     vapid_private_key: str = ""

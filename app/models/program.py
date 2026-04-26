@@ -52,4 +52,4 @@ class Program(Base):
     program_zones: Mapped[list["ProgramZone"]] = relationship(
         "ProgramZone", back_populates="program", cascade="all, delete-orphan"
     )
-    watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="program")  # type: ignore[name-defined]
+    watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="program", passive_deletes=True)  # type: ignore[name-defined]

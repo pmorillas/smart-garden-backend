@@ -1,12 +1,14 @@
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import AsyncSessionLocal
 from app.irrigation.conditions import evaluate_program
 from app.irrigation.actions import trigger_watering
@@ -51,7 +53,7 @@ def stop_scheduler() -> None:
 
 
 async def _check_programs() -> None:
-    now = datetime.now()  # local time — users configure schedules in local time
+    now = datetime.now(ZoneInfo(settings.local_tz))
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -94,6 +96,7 @@ async def _check_cooldown(zone_id: int) -> bool:
 
 async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
     if not program.program_zones:
+        logger.debug("Programa %s (%s): sense zones, saltant", program.id, program.name)
         return
 
     if program.execution_mode == "sequential" and program.id in _running_sequences:
@@ -103,20 +106,30 @@ async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
     ambient_temp = garden.ambient.temp
 
     # For condition evaluation, use first zone's humidity as representative
-    if program.program_zones:
-        first_zone_id = program.program_zones[0].zone_id
-        first_zone_state = garden.zones.get(first_zone_id)
-        if first_zone_state:
-            soil_humidity = first_zone_state.soil_humidity_avg
+    first_zone_id = program.program_zones[0].zone_id
+    first_zone_state = garden.zones.get(first_zone_id)
+    if first_zone_state:
+        soil_humidity = first_zone_state.soil_humidity_avg
 
     if not evaluate_program(program, now, soil_humidity, ambient_temp):
+        logger.debug(
+            "Programa %s (%s): condicions no complides (hora=%s, hum=%.1f, temp=%s)",
+            program.id, program.name,
+            now.strftime("%H:%M"),
+            soil_humidity if soil_humidity is not None else -1,
+            ambient_temp,
+        )
         return
 
     # Determine which zones are eligible (not watering + cooldown elapsed)
     eligible: list[tuple[int, int]] = []  # (zone_id, duration_seconds)
     for pz in sorted(program.program_zones, key=lambda x: x.order_index):
         zone_state = garden.zones.get(pz.zone_id)
-        if zone_state is None or zone_state.is_watering:
+        if zone_state is None:
+            logger.warning("Programa %s: zona %s no trobada en memòria, saltant", program.id, pz.zone_id)
+            continue
+        if zone_state.is_watering:
+            logger.debug("Programa %s: zona %s ja regant, saltant", program.id, pz.zone_id)
             continue
         if not await _check_cooldown(pz.zone_id):
             logger.debug("Zona %s: cooldown actiu, saltant", pz.zone_id)
@@ -125,6 +138,7 @@ async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
         eligible.append((pz.zone_id, duration))
 
     if not eligible:
+        logger.debug("Programa %s (%s): cap zona elegible", program.id, program.name)
         return
 
     if program.execution_mode == "simultaneous":
