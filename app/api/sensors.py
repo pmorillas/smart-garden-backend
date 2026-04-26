@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,3 +66,41 @@ async def get_latest_sensors(db: AsyncSession = Depends(get_db)):
 async def get_latest_ambient():
     """Retorna les lectures ambient actuals de la memòria (temps real)."""
     return garden.ambient.to_dict()
+
+
+@router.get("/ambient/history")
+async def get_ambient_history(hours: int = 24, db: AsyncSession = Depends(get_db)):
+    """Retorna l'historial de lectures ambientals (temperatura, humitat, llum)."""
+    from datetime import timedelta
+    from sqlalchemy import and_
+
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    result = await db.execute(
+        select(SensorReading)
+        .where(
+            and_(
+                SensorReading.sensor_type.in_(["ambient_temperature", "ambient_humidity", "light_lux"]),
+                SensorReading.timestamp >= since,
+            )
+        )
+        .order_by(SensorReading.timestamp)
+    )
+    readings = result.scalars().all()
+
+    temperature, ambient_humidity, light_lux = [], [], []
+    for r in readings:
+        entry = {"timestamp": r.timestamp.isoformat(), "value": r.value}
+        if r.sensor_type == "ambient_temperature":
+            temperature.append(entry)
+        elif r.sensor_type == "ambient_humidity":
+            ambient_humidity.append(entry)
+        elif r.sensor_type == "light_lux":
+            light_lux.append(entry)
+
+    return {
+        "hours": hours,
+        "temperature": temperature,
+        "ambient_humidity": ambient_humidity,
+        "light_lux": light_lux,
+    }
