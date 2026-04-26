@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlalchemy[asyncio]
+alembic
+asyncpg
+paho-mqtt
+apscheduler
+pydantic-settings
+httpx
+python-dotenv
