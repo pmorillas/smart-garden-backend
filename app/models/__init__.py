@@ -7,6 +7,7 @@ from app.models.event import WateringEvent
 from app.models.program import Program
 from app.models.alert import Alert
 from app.models.push import PushSubscription
+from app.models.firmware import FirmwareRelease, FirmwareUpdate
 
 __all__ = [
     "Base",
@@ -19,4 +20,6 @@ __all__ = [
     "Program",
     "Alert",
     "PushSubscription",
+    "FirmwareRelease",
+    "FirmwareUpdate",
 ]

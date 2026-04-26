@@ -76,6 +76,53 @@ async def _handle_device_register(payload: dict) -> None:
         logger.info("Dispositiu actualitzat: %s IP=%s FW=%s", mac, payload.get("ip", "?"), payload.get("firmware", "?"))
 
 
+async def _handle_ota_status(payload: dict) -> None:
+    from app.database import AsyncSessionLocal
+    from app.models import Device
+    from app.models.firmware import FirmwareUpdate, FirmwareRelease
+    from sqlalchemy import select
+
+    mac = payload.get("mac")
+    status = payload.get("status")
+    version = payload.get("version")
+    error = payload.get("error")
+
+    if not mac or not status:
+        return
+
+    async with AsyncSessionLocal() as db:
+        device_result = await db.execute(select(Device).where(Device.mac_address == mac))
+        device = device_result.scalar_one_or_none()
+        if device is None:
+            return
+
+        release_result = await db.execute(
+            select(FirmwareRelease).where(FirmwareRelease.version == version)
+        ) if version else None
+        release = release_result.scalar_one_or_none() if release_result else None
+
+        update_query = (
+            select(FirmwareUpdate)
+            .where(FirmwareUpdate.device_id == device.id)
+            .order_by(FirmwareUpdate.started_at.desc())
+        )
+        if release:
+            update_query = update_query.where(FirmwareUpdate.release_id == release.id)
+        update_result = await db.execute(update_query.limit(1))
+        update = update_result.scalar_one_or_none()
+
+        if update:
+            update.status = status
+            if status in ("success", "failed"):
+                from datetime import datetime, timezone
+                update.completed_at = datetime.now(timezone.utc)
+            if error:
+                update.error_message = error
+            await db.commit()
+
+    logger.info("OTA status rebut: MAC=%s status=%s v=%s error=%s", mac, status, version, error)
+
+
 async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
     from sqlalchemy import select as sa_select
     from app.database import AsyncSessionLocal
@@ -134,12 +181,18 @@ class MqttClient:
     def publish_config(self, payload: dict):
         self._client.publish("smartgarden/config/push", json.dumps(payload))
 
+    def publish_ota_update(self, mac: str, url: str, version: str, checksum_sha256: str):
+        payload = json.dumps({"version": version, "url": url, "checksum": checksum_sha256})
+        self._client.publish(f"smartgarden/ota/{mac}", payload)
+        logger.info("OTA publicat a %s: v%s", mac, version)
+
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             logger.info("MQTT connectat")
             client.subscribe("smartgarden/sensors/soil/#")
             client.subscribe("smartgarden/sensors/ambient")
             client.subscribe("smartgarden/devices/register")
+            client.subscribe("smartgarden/devices/ota_status")
         else:
             logger.error("MQTT error connexió: %s", reason_code)
 
@@ -155,6 +208,12 @@ class MqttClient:
         if topic == "smartgarden/devices/register":
             asyncio.run_coroutine_threadsafe(
                 _handle_device_register(payload), self._loop
+            )
+            return
+
+        if topic == "smartgarden/devices/ota_status":
+            asyncio.run_coroutine_threadsafe(
+                _handle_ota_status(payload), self._loop
             )
             return
 

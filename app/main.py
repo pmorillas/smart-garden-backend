@@ -19,6 +19,7 @@ from app.api import programs as programs_module
 from app.api import devices as devices_module
 from app.api import alerts as alerts_module
 from app.api import push as push_module
+from app.api import firmware as firmware_module
 from app.irrigation import actions as irrigation_actions
 from app.scheduler import runner as scheduler_runner
 from app.state import garden, ZoneStatus
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     _mqtt_client = MqttClient(loop=loop)
     _mqtt_client.connect()
     irrigation_actions.set_mqtt_client(_mqtt_client)
+    firmware_module.set_mqtt_client(_mqtt_client)
 
     scheduler_runner.start_scheduler()
 
@@ -123,6 +125,7 @@ app.include_router(programs_module.router)
 app.include_router(devices_module.router)
 app.include_router(alerts_module.router)
 app.include_router(push_module.router)
+app.include_router(firmware_module.router)
 
 
 @app.get("/health")

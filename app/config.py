@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "changeme"
 
+    # OTA — URL accessible des de l'ESP32 per descarregar els binaris
+    ota_base_url: str = "http://localhost:8000"
+
     # Web Push (VAPID)
     vapid_public_key: str = ""
     vapid_private_key: str = ""
