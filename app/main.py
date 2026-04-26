@@ -21,9 +21,10 @@ from app.api import alerts as alerts_module
 from app.api import alert_rules as alert_rules_module
 from app.api import push as push_module
 from app.api import firmware as firmware_module
+from app.api import tanks as tanks_module
 from app.irrigation import actions as irrigation_actions
 from app.scheduler import runner as scheduler_runner
-from app.state import garden, ZoneStatus
+from app.state import garden, ZoneStatus, TankStatus
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def _run_migrations() -> None:
 
 
 async def _seed_initial_data() -> None:
-    from app.models import Zone, ZoneConfig, User
+    from app.models import Zone, ZoneConfig, User, WaterTank
     from app.core.security import hash_password
 
     async with AsyncSessionLocal() as db:
@@ -62,7 +63,12 @@ async def _seed_initial_data() -> None:
 
         for z in zones:
             if z.active:
-                garden.zones[z.id] = ZoneStatus(z.id, z.name)
+                garden.zones[z.id] = ZoneStatus(z.id, z.name, tank_id=z.tank_id)
+
+        # Dipòsits en memòria
+        tanks_result = await db.execute(select(WaterTank).where(WaterTank.active == True))  # noqa: E712
+        for t in tanks_result.scalars().all():
+            garden.tanks[t.id] = TankStatus(t.id, t.name, t.empty_threshold_pct, t.low_threshold_pct)
 
         # Usuari admin per defecte
         user_result = await db.execute(select(User))
@@ -77,6 +83,7 @@ async def _seed_initial_data() -> None:
             await db.commit()
 
     logger.info("Zones en memòria: %s", list(garden.zones.keys()))
+    logger.info("Dipòsits en memòria: %s", list(garden.tanks.keys()))
 
 
 @asynccontextmanager
@@ -128,6 +135,7 @@ app.include_router(alerts_module.router)
 app.include_router(alert_rules_module.router)
 app.include_router(push_module.router)
 app.include_router(firmware_module.router)
+app.include_router(tanks_module.router)
 
 
 @app.get("/health")

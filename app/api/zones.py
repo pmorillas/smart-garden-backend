@@ -38,6 +38,7 @@ class ZoneUpdate(BaseModel):
     relay_pin_local: int | None = Field(default=None, ge=0, le=39)
     soil_pin_a_local: int | None = Field(default=None, ge=0, le=39)
     soil_pin_b_local: int | None = Field(default=None, ge=0, le=39)
+    tank_id: int | None = Field(default=None)
 
 
 class ZoneConfigUpdate(BaseModel):
@@ -66,6 +67,7 @@ def _zone_to_dict(zone: Zone) -> dict:
         "name": zone.name,
         "active": zone.active,
         "device_id": zone.device_id,
+        "tank_id": zone.tank_id,
         "relay_pin_local": zone.relay_pin_local,
         "soil_pin_a_local": zone.soil_pin_a_local,
         "soil_pin_b_local": zone.soil_pin_b_local,
@@ -175,6 +177,12 @@ async def update_zone(zone_id: int, body: ZoneUpdate, db: AsyncSession = Depends
         if val is not None and val != getattr(zone, field):
             setattr(zone, field, val)
             gpio_changed = True
+
+    if "tank_id" in body.model_fields_set:
+        zone.tank_id = body.tank_id
+        mem_zone = garden.zones.get(zone_id)
+        if mem_zone:
+            mem_zone.tank_id = body.tank_id
 
     if gpio_changed:
         zone.config_synced = False

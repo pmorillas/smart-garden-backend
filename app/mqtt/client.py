@@ -91,6 +91,28 @@ async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None
                 mqtt_client.publish_zone_config(mac, config)
                 logger.info("Zone config empesa a %s en registrar: %d zones", mac, len(zones))
 
+            from app.models.tank import WaterTank
+            tanks_result = await db.execute(
+                select(WaterTank).where(WaterTank.device_id == device.id, WaterTank.active == True)  # noqa: E712
+            )
+            tanks = tanks_result.scalars().all()
+            if tanks:
+                tank_config = [
+                    {
+                        "id": t.id,
+                        "sensor_type": t.sensor_type,
+                        "pin_1": t.gpio_pin_1,
+                        "pin_2": t.gpio_pin_2,
+                        "cal_empty": t.calibration_empty,
+                        "cal_full": t.calibration_full,
+                        "low_pct": t.low_threshold_pct,
+                        "empty_pct": t.empty_threshold_pct,
+                    }
+                    for t in tanks
+                ]
+                mqtt_client.publish_tank_config(mac, tank_config)
+                logger.info("Tank config empesa a %s en registrar: %d tanks", mac, len(tanks))
+
 
 async def _handle_ota_status(payload: dict) -> None:
     from app.database import AsyncSessionLocal
@@ -137,6 +159,49 @@ async def _handle_ota_status(payload: dict) -> None:
             await db.commit()
 
     logger.info("OTA status rebut: MAC=%s status=%s v=%s error=%s", mac, status, version, error)
+
+
+async def _persist_tank_reading(tank_id: int, raw_value: float, level_percent: float | None, sensor_state: str, timestamp: datetime) -> None:
+    from app.database import AsyncSessionLocal
+    from app.models.tank import TankReading
+
+    async with AsyncSessionLocal() as db:
+        db.add(TankReading(
+            tank_id=tank_id,
+            raw_value=raw_value,
+            level_percent=level_percent,
+            sensor_state=sensor_state,
+            timestamp=timestamp,
+        ))
+        await db.commit()
+
+
+async def _check_tank_alerts(tank_id: int, sensor_state: str, level_percent: float | None) -> None:
+    from app.notifications.push import maybe_create_alert, auto_resolve_alert, get_alert_rule
+
+    tank = garden.tanks.get(tank_id)
+    if tank is None:
+        return
+
+    if tank.is_empty():
+        rule = await get_alert_rule("tank_empty")
+        if rule is not None:
+            await maybe_create_alert(
+                "tank_empty",
+                f"Dipòsit {tank.name} buit",
+            )
+        await auto_resolve_alert("tank_low")
+    else:
+        await auto_resolve_alert("tank_empty")
+        if level_percent is not None and level_percent <= tank.low_threshold_pct:
+            rule = await get_alert_rule("tank_low")
+            if rule is not None:
+                await maybe_create_alert(
+                    "tank_low",
+                    f"Dipòsit {tank.name} baix ({level_percent:.0f}%)",
+                )
+        else:
+            await auto_resolve_alert("tank_low")
 
 
 async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
@@ -234,11 +299,17 @@ class MqttClient:
         self._client.publish(f"smartgarden/config/zones/{device_mac}", payload)
         logger.info("Zone config publicada a %s (%d zones)", device_mac, len(zones))
 
+    def publish_tank_config(self, device_mac: str, tanks: list[dict]) -> None:
+        payload = json.dumps({"tanks": tanks})
+        self._client.publish(f"smartgarden/config/tanks/{device_mac}", payload)
+        logger.info("Tank config publicada a %s (%d tanks)", device_mac, len(tanks))
+
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             logger.info("MQTT connectat")
             client.subscribe("smartgarden/sensors/soil/#")
             client.subscribe("smartgarden/sensors/ambient")
+            client.subscribe("smartgarden/sensors/tank/#")
             client.subscribe("smartgarden/devices/register")
             client.subscribe("smartgarden/devices/ota_status")
             client.subscribe("smartgarden/devices/ack/#")
@@ -319,6 +390,39 @@ class MqttClient:
             )
             asyncio.run_coroutine_threadsafe(
                 _check_humidity_alert(zone_id, avg), self._loop
+            )
+            if mac:
+                asyncio.run_coroutine_threadsafe(
+                    _update_device_last_seen(mac), self._loop
+                )
+
+        elif topic.startswith("smartgarden/sensors/tank/"):
+            try:
+                tank_id = int(topic.rsplit("/", 1)[-1])
+            except ValueError:
+                return
+
+            tank = garden.tanks.get(tank_id)
+            if tank is None:
+                return
+
+            raw_value = payload.get("raw_value")
+            if raw_value is None:
+                return
+
+            level_percent = payload.get("level_pct")
+            sensor_state = payload.get("state", "ok")
+
+            tank.level_percent = level_percent
+            tank.sensor_state = sensor_state
+            tank.last_reading_at = now.isoformat()
+
+            asyncio.run_coroutine_threadsafe(
+                _persist_tank_reading(tank_id, raw_value, level_percent, sensor_state, now),
+                self._loop,
+            )
+            asyncio.run_coroutine_threadsafe(
+                _check_tank_alerts(tank_id, sensor_state, level_percent), self._loop
             )
             if mac:
                 asyncio.run_coroutine_threadsafe(

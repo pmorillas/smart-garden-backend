@@ -7,6 +7,7 @@ from app.models.event import WateringEvent
 from app.models.program import Program, ProgramZone
 from app.models.alert import Alert
 from app.models.alert_rule import AlertRule
+from app.models.tank import WaterTank, TankReading
 from app.models.push import PushSubscription
 from app.models.firmware import FirmwareRelease, FirmwareUpdate
 
@@ -22,6 +23,8 @@ __all__ = [
     "ProgramZone",
     "Alert",
     "AlertRule",
+    "WaterTank",
+    "TankReading",
     "PushSubscription",
     "FirmwareRelease",
     "FirmwareUpdate",

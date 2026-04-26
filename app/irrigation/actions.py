@@ -26,6 +26,17 @@ async def trigger_watering(
     if zone is None or zone.is_watering:
         return False
 
+    if zone.tank_id is not None:
+        tank = garden.tanks.get(zone.tank_id)
+        if tank is not None and tank.is_empty():
+            logger.warning("Zona %d: reg bloquejat — dipòsit %d buit (%s)", zone_id, zone.tank_id, tank.sensor_state)
+            from app.notifications.push import maybe_create_alert
+            await maybe_create_alert(
+                "tank_empty",
+                f"Reg de la zona {zone_id} bloquejat — dipòsit {tank.name} buit",
+            )
+            return False
+
     if _mqtt_client is not None:
         _mqtt_client.publish_control(zone_id, "on", duration_seconds)
 

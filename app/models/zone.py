@@ -17,14 +17,17 @@ class Zone(Base):
     soil_pin_a_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
     soil_pin_b_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
     config_synced: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    tank_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("water_tanks.id", ondelete="SET NULL"), nullable=True
+    )
 
     device: Mapped["Device | None"] = relationship("Device", back_populates="zones")  # type: ignore[name-defined]
     config: Mapped["ZoneConfig | None"] = relationship(
         "ZoneConfig", back_populates="zone", uselist=False, cascade="all, delete-orphan"
     )
-    sensor_readings: Mapped[list["SensorReading"]] = relationship("SensorReading", back_populates="zone")  # type: ignore[name-defined]
-    watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="zone")  # type: ignore[name-defined]
-    program_zones: Mapped[list["ProgramZone"]] = relationship("ProgramZone", back_populates="zone", cascade="all, delete-orphan")  # type: ignore[name-defined]
+    sensor_readings: Mapped[list["SensorReading"]] = relationship("SensorReading", back_populates="zone", passive_deletes=True)  # type: ignore[name-defined]
+    watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="zone", passive_deletes=True)  # type: ignore[name-defined]
+    program_zones: Mapped[list["ProgramZone"]] = relationship("ProgramZone", back_populates="zone", cascade="all, delete-orphan", passive_deletes=True)  # type: ignore[name-defined]
 
 
 class ZoneConfig(Base):
