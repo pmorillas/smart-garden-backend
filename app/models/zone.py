@@ -16,6 +16,7 @@ class Zone(Base):
     relay_pin_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
     soil_pin_a_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
     soil_pin_b_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    config_synced: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     device: Mapped["Device | None"] = relationship("Device", back_populates="zones")  # type: ignore[name-defined]
     config: Mapped["ZoneConfig | None"] = relationship(
@@ -23,7 +24,7 @@ class Zone(Base):
     )
     sensor_readings: Mapped[list["SensorReading"]] = relationship("SensorReading", back_populates="zone")  # type: ignore[name-defined]
     watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="zone")  # type: ignore[name-defined]
-    programs: Mapped[list["Program"]] = relationship("Program", back_populates="zone")  # type: ignore[name-defined]
+    program_zones: Mapped[list["ProgramZone"]] = relationship("ProgramZone", back_populates="zone", cascade="all, delete-orphan")  # type: ignore[name-defined]
 
 
 class ZoneConfig(Base):

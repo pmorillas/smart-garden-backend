@@ -52,9 +52,9 @@ async def _persist_ambient_readings(
         await db.commit()
 
 
-async def _handle_device_register(payload: dict) -> None:
+async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None" = None) -> None:
     from app.database import AsyncSessionLocal
-    from app.models import Device
+    from app.models import Device, Zone
     from sqlalchemy import select
 
     mac = payload.get("mac")
@@ -74,6 +74,22 @@ async def _handle_device_register(payload: dict) -> None:
             device.firmware_version = payload["firmware"]
         await db.commit()
         logger.info("Dispositiu actualitzat: %s IP=%s FW=%s", mac, payload.get("ip", "?"), payload.get("firmware", "?"))
+
+        if mqtt_client is not None:
+            zones_result = await db.execute(select(Zone).where(Zone.device_id == device.id))
+            zones = zones_result.scalars().all()
+            if zones:
+                config = [
+                    {
+                        "id": z.id,
+                        "relay_pin": z.relay_pin_local,
+                        "soil_pin_a": z.soil_pin_a_local,
+                        "soil_pin_b": z.soil_pin_b_local,
+                    }
+                    for z in zones
+                ]
+                mqtt_client.publish_zone_config(mac, config)
+                logger.info("Zone config empesa a %s en registrar: %d zones", mac, len(zones))
 
 
 async def _handle_ota_status(payload: dict) -> None:
@@ -146,6 +162,29 @@ async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
         await auto_resolve_alert("humidity_low", zone_id=zone_id)
 
 
+async def _handle_zone_config_ack(payload: dict, topic: str) -> None:
+    if payload.get("config") != "zones":
+        return
+    mac = topic.rsplit("/", 1)[-1]
+    status = payload.get("status")
+
+    from app.database import AsyncSessionLocal
+    from app.models import Device, Zone
+    from sqlalchemy import select, update
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Device).where(Device.mac_address == mac))
+        device = result.scalar_one_or_none()
+        if device is None:
+            return
+        synced = status == "stored"
+        await db.execute(
+            update(Zone).where(Zone.device_id == device.id).values(config_synced=synced)
+        )
+        await db.commit()
+        logger.info("Zone config ACK de %s: %s → config_synced=%s", mac, status, synced)
+
+
 async def _update_device_last_seen(mac: str) -> None:
     from app.database import AsyncSessionLocal
     from app.models import Device
@@ -186,6 +225,11 @@ class MqttClient:
         self._client.publish(f"smartgarden/ota/{mac}", payload)
         logger.info("OTA publicat a %s: v%s", mac, version)
 
+    def publish_zone_config(self, device_mac: str, zones: list[dict]) -> None:
+        payload = json.dumps({"zones": zones})
+        self._client.publish(f"smartgarden/config/zones/{device_mac}", payload)
+        logger.info("Zone config publicada a %s (%d zones)", device_mac, len(zones))
+
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
             logger.info("MQTT connectat")
@@ -193,6 +237,7 @@ class MqttClient:
             client.subscribe("smartgarden/sensors/ambient")
             client.subscribe("smartgarden/devices/register")
             client.subscribe("smartgarden/devices/ota_status")
+            client.subscribe("smartgarden/devices/ack/#")
         else:
             logger.error("MQTT error connexió: %s", reason_code)
 
@@ -207,7 +252,13 @@ class MqttClient:
     def _dispatch(self, topic: str, payload: dict):
         if topic == "smartgarden/devices/register":
             asyncio.run_coroutine_threadsafe(
-                _handle_device_register(payload), self._loop
+                _handle_device_register(payload, self), self._loop
+            )
+            return
+
+        if topic.startswith("smartgarden/devices/ack/"):
+            asyncio.run_coroutine_threadsafe(
+                _handle_zone_config_ack(payload, topic), self._loop
             )
             return
 

@@ -1,14 +1,16 @@
+import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.database import AsyncSessionLocal
 from app.irrigation.conditions import evaluate_program
 from app.irrigation.actions import trigger_watering
-from app.models import Program, WateringEvent, ZoneConfig, Device
+from app.models import Program, ProgramZone, WateringEvent, ZoneConfig, Device
 from app.state import garden
 
 logger = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 DEVICE_OFFLINE_MINUTES = 30
 
 _scheduler: AsyncIOScheduler | None = None
+_running_sequences: set[int] = set()  # program_ids amb seqüència activa
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -51,7 +54,11 @@ async def _check_programs() -> None:
     now = datetime.now()  # local time — users configure schedules in local time
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Program).where(Program.active == True))  # noqa: E712
+        result = await db.execute(
+            select(Program)
+            .where(Program.active == True)  # noqa: E712
+            .options(selectinload(Program.program_zones))
+        )
         programs = result.scalars().all()
 
     for program in programs:
@@ -61,51 +68,111 @@ async def _check_programs() -> None:
             logger.exception("Error avaluant programa %s (%s)", program.id, program.name)
 
 
-async def _evaluate_and_trigger(program, now: datetime) -> None:
-    zone = garden.zones.get(program.zone_id)
-    if zone is None or zone.is_watering:
-        return
-
-    soil_humidity = zone.soil_humidity_avg
-    ambient_temp = garden.ambient.temp
-
-    if not evaluate_program(program, now, soil_humidity, ambient_temp):
-        return
-
+async def _check_cooldown(zone_id: int) -> bool:
+    """Retorna True si el cooldown ha expirat (es pot regar)."""
     async with AsyncSessionLocal() as db:
         last_result = await db.execute(
             select(WateringEvent)
-            .where(WateringEvent.zone_id == program.zone_id)
+            .where(WateringEvent.zone_id == zone_id)
             .order_by(WateringEvent.started_at.desc())
             .limit(1)
         )
         last_event = last_result.scalar_one_or_none()
+        if last_event is None:
+            return True
 
-        if last_event is not None:
-            cfg_result = await db.execute(
-                select(ZoneConfig).where(ZoneConfig.zone_id == program.zone_id)
-            )
-            config = cfg_result.scalar_one_or_none()
-            if config and config.cooldown_hours > 0:
-                elapsed = datetime.now(timezone.utc) - last_event.started_at
-                if elapsed < timedelta(hours=config.cooldown_hours):
-                    remaining_h = (timedelta(hours=config.cooldown_hours) - elapsed).total_seconds() / 3600
-                    logger.debug(
-                        "Zona %s: cooldown actiu (%.1fh restants)",
-                        program.zone_id, remaining_h,
-                    )
-                    return
+        cfg_result = await db.execute(
+            select(ZoneConfig).where(ZoneConfig.zone_id == zone_id)
+        )
+        config = cfg_result.scalar_one_or_none()
+        if config and config.cooldown_hours > 0:
+            elapsed = datetime.now(timezone.utc) - last_event.started_at
+            if elapsed < timedelta(hours=config.cooldown_hours):
+                return False
+    return True
 
-    logger.info(
-        "Programa %s (%s) — zona %s: condicions complides, iniciant reg %ds",
-        program.id, program.name, program.zone_id, program.duration_seconds,
-    )
-    await trigger_watering(
-        zone_id=program.zone_id,
-        duration_seconds=program.duration_seconds,
-        trigger_type="schedule",
-        program_id=program.id,
-    )
+
+async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
+    if not program.program_zones:
+        return
+
+    if program.execution_mode == "sequential" and program.id in _running_sequences:
+        return
+
+    soil_humidity = None
+    ambient_temp = garden.ambient.temp
+
+    # For condition evaluation, use first zone's humidity as representative
+    if program.program_zones:
+        first_zone_id = program.program_zones[0].zone_id
+        first_zone_state = garden.zones.get(first_zone_id)
+        if first_zone_state:
+            soil_humidity = first_zone_state.soil_humidity_avg
+
+    if not evaluate_program(program, now, soil_humidity, ambient_temp):
+        return
+
+    # Determine which zones are eligible (not watering + cooldown elapsed)
+    eligible: list[tuple[int, int]] = []  # (zone_id, duration_seconds)
+    for pz in sorted(program.program_zones, key=lambda x: x.order_index):
+        zone_state = garden.zones.get(pz.zone_id)
+        if zone_state is None or zone_state.is_watering:
+            continue
+        if not await _check_cooldown(pz.zone_id):
+            logger.debug("Zona %s: cooldown actiu, saltant", pz.zone_id)
+            continue
+        duration = pz.duration_override_seconds or program.duration_seconds
+        eligible.append((pz.zone_id, duration))
+
+    if not eligible:
+        return
+
+    if program.execution_mode == "simultaneous":
+        for zone_id, duration in eligible:
+            logger.info("Programa %s (%s) — zona %s: simultani, reg %ds", program.id, program.name, zone_id, duration)
+            await trigger_watering(zone_id=zone_id, duration_seconds=duration, trigger_type="schedule", program_id=program.id)
+
+    else:  # sequential
+        logger.info("Programa %s (%s): iniciant seqüència amb %d zones", program.id, program.name, len(eligible))
+        _running_sequences.add(program.id)
+        asyncio.create_task(
+            _run_sequential_sequence(program.id, program.name, eligible)
+        )
+
+
+async def _run_sequential_sequence(
+    program_id: int,
+    program_name: str,
+    ordered_zones: list[tuple[int, int]],
+) -> None:
+    """Executa zones seqüencialment. Continua a la següent si hi ha error transitori."""
+    try:
+        for zone_id, duration in ordered_zones:
+            zone_state = garden.zones.get(zone_id)
+            if zone_state is None:
+                logger.warning("Sequential prog %s: zona %s no trobada, saltant", program_id, zone_id)
+                continue
+
+            try:
+                logger.info("Sequential prog %s (%s): zona %s, %ds", program_id, program_name, zone_id, duration)
+                await trigger_watering(zone_id=zone_id, duration_seconds=duration, trigger_type="schedule", program_id=program_id)
+            except Exception as e:
+                logger.warning("Sequential prog %s: error iniciant zona %s: %s, continuant", program_id, zone_id, e)
+                continue
+
+            # Espera que la zona acabi (màx duration + 90s buffer)
+            timeout_s = duration + 90
+            for _ in range(timeout_s // 3):
+                await asyncio.sleep(3)
+                zs = garden.zones.get(zone_id)
+                if zs is None or not zs.is_watering:
+                    break
+
+            # Pausa breu entre zones
+            await asyncio.sleep(3)
+    finally:
+        _running_sequences.discard(program_id)
+        logger.info("Sequential prog %s: seqüència completada", program_id)
 
 
 async def _check_device_offline() -> None:
