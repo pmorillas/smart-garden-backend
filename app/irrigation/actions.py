@@ -72,6 +72,12 @@ async def _auto_stop(zone_id: int, delay: int, event_id: int | None = None) -> N
         await ws_manager.broadcast(garden.to_dict())
         if event_id is not None:
             await _finish_watering_event(event_id, delay)
+        from app.notifications.push import maybe_create_alert
+        await maybe_create_alert(
+            "water_completed",
+            f"Reg completat a la zona {zone_id} ({delay}s)",
+            zone_id=zone_id,
+        )
 
 
 async def _finish_watering_event(event_id: int, duration_seconds: int) -> None:

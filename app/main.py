@@ -18,6 +18,7 @@ from app.api import auth as auth_module
 from app.api import programs as programs_module
 from app.api import devices as devices_module
 from app.api import alerts as alerts_module
+from app.api import alert_rules as alert_rules_module
 from app.api import push as push_module
 from app.api import firmware as firmware_module
 from app.irrigation import actions as irrigation_actions
@@ -124,6 +125,7 @@ app.include_router(sensors_module.router)
 app.include_router(programs_module.router)
 app.include_router(devices_module.router)
 app.include_router(alerts_module.router)
+app.include_router(alert_rules_module.router)
 app.include_router(push_module.router)
 app.include_router(firmware_module.router)
 

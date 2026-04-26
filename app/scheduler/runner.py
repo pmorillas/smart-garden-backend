@@ -176,9 +176,14 @@ async def _run_sequential_sequence(
 
 
 async def _check_device_offline() -> None:
-    from app.notifications.push import create_alert, has_active_alert, auto_resolve_alert
+    from app.notifications.push import maybe_create_alert, auto_resolve_alert, get_alert_rule
 
-    threshold = datetime.now(timezone.utc) - timedelta(minutes=DEVICE_OFFLINE_MINUTES)
+    rule = await get_alert_rule("device_offline")
+    if rule is None:
+        return
+
+    offline_minutes = int(rule.threshold) if rule.threshold is not None else DEVICE_OFFLINE_MINUTES
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=offline_minutes)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
@@ -187,13 +192,11 @@ async def _check_device_offline() -> None:
     for device in devices:
         if device.last_seen is None:
             continue
-        is_offline = device.last_seen < threshold
-        if is_offline:
-            if not await has_active_alert("device_offline", device_id=device.id):
-                await create_alert(
-                    "device_offline",
-                    f"Dispositiu '{device.name}' ({device.mac_address}) no respon des de fa més de {DEVICE_OFFLINE_MINUTES} min",
-                    device_id=device.id,
-                )
+        if device.last_seen < cutoff:
+            await maybe_create_alert(
+                "device_offline",
+                f"Dispositiu '{device.name}' ({device.mac_address}) no respon des de fa més de {offline_minutes} min",
+                device_id=device.id,
+            )
         else:
             await auto_resolve_alert("device_offline", device_id=device.id)

@@ -143,21 +143,25 @@ async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
     from sqlalchemy import select as sa_select
     from app.database import AsyncSessionLocal
     from app.models import ZoneConfig
-    from app.notifications.push import create_alert, has_active_alert, auto_resolve_alert
+    from app.notifications.push import maybe_create_alert, auto_resolve_alert, get_alert_rule
 
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(sa_select(ZoneConfig).where(ZoneConfig.zone_id == zone_id))
-        config = result.scalar_one_or_none()
+    rule = await get_alert_rule("humidity_low", zone_id=zone_id)
+    if rule is None:
+        return
 
-    threshold = config.humidity_min if config else 30.0
+    threshold = rule.threshold
+    if threshold is None:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(sa_select(ZoneConfig).where(ZoneConfig.zone_id == zone_id))
+            config = result.scalar_one_or_none()
+            threshold = config.humidity_min if config else 30.0
 
     if humidity_pct < threshold:
-        if not await has_active_alert("humidity_low", zone_id=zone_id):
-            await create_alert(
-                "humidity_low",
-                f"Zona {zone_id}: humitat de terra molt baixa ({humidity_pct:.0f}% < {threshold:.0f}%)",
-                zone_id=zone_id,
-            )
+        await maybe_create_alert(
+            "humidity_low",
+            f"Zona {zone_id}: humitat de terra molt baixa ({humidity_pct:.0f}% < {threshold:.0f}%)",
+            zone_id=zone_id,
+        )
     else:
         await auto_resolve_alert("humidity_low", zone_id=zone_id)
 

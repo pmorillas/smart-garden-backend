@@ -6,6 +6,7 @@ from app.models.sensor import SensorReading
 from app.models.event import WateringEvent
 from app.models.program import Program, ProgramZone
 from app.models.alert import Alert
+from app.models.alert_rule import AlertRule
 from app.models.push import PushSubscription
 from app.models.firmware import FirmwareRelease, FirmwareUpdate
 
@@ -20,6 +21,7 @@ __all__ = [
     "Program",
     "ProgramZone",
     "Alert",
+    "AlertRule",
     "PushSubscription",
     "FirmwareRelease",
     "FirmwareUpdate",

@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 
@@ -108,6 +108,57 @@ async def _send_push_to_all(title: str, body: str, tag: str = "") -> None:
                 if sub:
                     await db.delete(sub)
             await db.commit()
+
+
+async def get_alert_rule(alert_type: str, zone_id: int | None = None):
+    """Finds the best enabled AlertRule: zone-specific first, then global (zone_id=NULL)."""
+    from app.models.alert_rule import AlertRule
+    async with AsyncSessionLocal() as db:
+        if zone_id is not None:
+            result = await db.execute(
+                select(AlertRule).where(
+                    AlertRule.alert_type == alert_type,
+                    AlertRule.zone_id == zone_id,
+                    AlertRule.enabled == True,  # noqa: E712
+                )
+            )
+            rule = result.scalar_one_or_none()
+            if rule is not None:
+                return rule
+        result = await db.execute(
+            select(AlertRule).where(
+                AlertRule.alert_type == alert_type,
+                AlertRule.zone_id == None,  # noqa: E711
+                AlertRule.enabled == True,  # noqa: E712
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+async def maybe_create_alert(
+    alert_type: str,
+    message: str,
+    zone_id: int | None = None,
+    device_id: int | None = None,
+) -> "Alert | None":
+    """Create alert only if an enabled rule exists and cooldown has elapsed."""
+    rule = await get_alert_rule(alert_type, zone_id)
+    if rule is None:
+        return None
+
+    if rule.cooldown_minutes > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=rule.cooldown_minutes)
+        async with AsyncSessionLocal() as db:
+            q = select(Alert).where(Alert.type == alert_type, Alert.created_at >= cutoff)
+            if zone_id is not None:
+                q = q.where(Alert.zone_id == zone_id)
+            if device_id is not None:
+                q = q.where(Alert.device_id == device_id)
+            result = await db.execute(q)
+            if result.scalar_one_or_none() is not None:
+                return None
+
+    return await create_alert(alert_type, message, zone_id=zone_id, device_id=device_id)
 
 
 def _title_for_type(alert_type: str) -> str:
