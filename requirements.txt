@@ -3,8 +3,12 @@ uvicorn[standard]
 sqlalchemy[asyncio]
 alembic
 asyncpg
+psycopg2-binary
 paho-mqtt
 apscheduler
 pydantic-settings
 httpx
 python-dotenv
+bcrypt
+python-jose[cryptography]
+pywebpush
