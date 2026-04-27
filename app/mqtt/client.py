@@ -421,6 +421,9 @@ class MqttClient:
             humidity = payload.get("humidity")
             light_lux = payload.get("light_lux")
 
+            if humidity is not None:
+                humidity = max(0.0, min(100.0, float(humidity)))
+
             garden.ambient.temp = temp
             garden.ambient.humidity = humidity
             garden.ambient.light_lux = light_lux
