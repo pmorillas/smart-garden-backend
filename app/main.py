@@ -24,7 +24,7 @@ from app.api import firmware as firmware_module
 from app.api import tanks as tanks_module
 from app.irrigation import actions as irrigation_actions
 from app.scheduler import runner as scheduler_runner
-from app.state import garden, ZoneStatus, TankStatus
+from app.state import garden, ZoneStatus, TankStatus, DeviceStatus
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,12 @@ async def _seed_initial_data() -> None:
         for t in tanks_result.scalars().all():
             garden.tanks[t.id] = TankStatus(t.id, t.name, t.empty_threshold_pct, t.low_threshold_pct)
 
+        # Dispositius en memòria (per al ping)
+        from app.models import Device
+        devices_result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
+        for d in devices_result.scalars().all():
+            garden.devices[d.mac_address] = DeviceStatus(d.mac_address, d.name)
+
         # Usuari admin per defecte
         user_result = await db.execute(select(User))
         if user_result.scalars().first() is None:
@@ -101,6 +107,7 @@ async def lifespan(app: FastAPI):
     _mqtt_client.connect()
     irrigation_actions.set_mqtt_client(_mqtt_client)
     firmware_module.set_mqtt_client(_mqtt_client)
+    scheduler_runner.set_mqtt_client(_mqtt_client)
 
     scheduler_runner.start_scheduler()
 

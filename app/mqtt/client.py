@@ -14,6 +14,7 @@ Publica a:
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 import paho.mqtt.client as mqtt
@@ -273,6 +274,7 @@ class MqttClient:
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
+        self._ping_sent_at: dict[str, float] = {}
 
     def connect(self):
         self._client.connect(settings.mqtt_host, settings.mqtt_port, keepalive=60)
@@ -294,6 +296,15 @@ class MqttClient:
         self._client.publish(f"smartgarden/ota/{mac}", payload)
         logger.info("OTA publicat a %s: v%s", mac, version)
 
+    def publish_sensor_request(self, mac: str) -> None:
+        self._client.publish(f"smartgarden/sensors/request/{mac}", "{}")
+        logger.debug("Sensor request enviat a %s", mac)
+
+    def publish_ping(self, mac: str) -> None:
+        self._ping_sent_at[mac] = time.time()
+        self._client.publish(f"smartgarden/ping/{mac}", "{}")
+        logger.debug("Ping enviat a %s", mac)
+
     def publish_zone_config(self, device_mac: str, zones: list[dict]) -> None:
         payload = json.dumps({"zones": zones})
         self._client.publish(f"smartgarden/config/zones/{device_mac}", payload)
@@ -313,6 +324,7 @@ class MqttClient:
             client.subscribe("smartgarden/devices/register")
             client.subscribe("smartgarden/devices/ota_status")
             client.subscribe("smartgarden/devices/ack/#")
+            client.subscribe("smartgarden/pong/#")
         else:
             logger.error("MQTT error connexió: %s", reason_code)
 
@@ -335,6 +347,17 @@ class MqttClient:
             asyncio.run_coroutine_threadsafe(
                 _handle_zone_config_ack(payload, topic), self._loop
             )
+            return
+
+        if topic.startswith("smartgarden/pong/"):
+            mac = topic.split("/")[-1]
+            sent_at = self._ping_sent_at.pop(mac, None)
+            latency_ms = round((time.time() - sent_at) * 1000, 1) if sent_at is not None else None
+            device = garden.devices.get(mac)
+            if device:
+                device.last_pong_at = datetime.now(timezone.utc).isoformat()
+                device.ping_latency_ms = latency_ms
+            logger.debug("Pong de %s: latència=%.1fms", mac, latency_ms or -1)
             return
 
         if topic == "smartgarden/devices/ota_status":

@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # Timezone local per avaluar els programes horaris (IANA, p.ex. "Europe/Madrid")
     local_tz: str = "Europe/Madrid"
 
+    # Polling de sensors i ping (en segons)
+    sensor_poll_interval_seconds: int = 300
+    sensor_ping_interval_seconds: int = 60
+
     # Web Push (VAPID)
     vapid_public_key: str = ""
     vapid_private_key: str = ""

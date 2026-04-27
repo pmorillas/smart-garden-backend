@@ -59,6 +59,22 @@ class TankStatus:
         }
 
 
+class DeviceStatus:
+    def __init__(self, mac: str, name: str = ""):
+        self.mac = mac
+        self.name = name
+        self.last_pong_at: Optional[str] = None
+        self.ping_latency_ms: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "mac": self.mac,
+            "name": self.name,
+            "last_pong_at": self.last_pong_at,
+            "ping_latency_ms": self.ping_latency_ms,
+        }
+
+
 class AmbientStatus:
     def __init__(self):
         self.temp: Optional[float] = None
@@ -77,6 +93,7 @@ class GardenState:
     def __init__(self):
         self.zones: dict[int, ZoneStatus] = {}
         self.tanks: dict[int, TankStatus] = {}
+        self.devices: dict[str, DeviceStatus] = {}
         self.ambient = AmbientStatus()
         self.updated_at: Optional[str] = None
 
@@ -87,6 +104,7 @@ class GardenState:
         return {
             "zones": [z.to_dict() for z in self.zones.values()],
             "tanks": [t.to_dict() for t in self.tanks.values()],
+            "devices": [d.to_dict() for d in self.devices.values()],
             "ambient": self.ambient.to_dict(),
             "updated_at": self.updated_at,
         }

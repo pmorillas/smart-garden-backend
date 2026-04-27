@@ -21,6 +21,12 @@ DEVICE_OFFLINE_MINUTES = 30
 
 _scheduler: AsyncIOScheduler | None = None
 _running_sequences: set[int] = set()  # program_ids amb seqüència activa
+_mqtt_client = None
+
+
+def set_mqtt_client(client) -> None:
+    global _mqtt_client
+    _mqtt_client = client
 
 
 def start_scheduler() -> AsyncIOScheduler:
@@ -38,6 +44,22 @@ def start_scheduler() -> AsyncIOScheduler:
         CronTrigger(minute="*/10"),
         id="check_devices",
         name="Comprovació dispositius offline",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _poll_sensors,
+        "interval",
+        seconds=settings.sensor_poll_interval_seconds,
+        id="poll_sensors",
+        name="Polling sensors ESP32",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _ping_devices,
+        "interval",
+        seconds=settings.sensor_ping_interval_seconds,
+        id="ping_devices",
+        name="Ping dispositius",
         replace_existing=True,
     )
     _scheduler.start()
@@ -214,3 +236,25 @@ async def _check_device_offline() -> None:
             )
         else:
             await auto_resolve_alert("device_offline", device_id=device.id)
+
+
+async def _poll_sensors() -> None:
+    if _mqtt_client is None:
+        return
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
+        devices = result.scalars().all()
+    for device in devices:
+        _mqtt_client.publish_sensor_request(device.mac_address)
+    logger.debug("Sensor poll enviat a %d dispositius", len(devices))
+
+
+async def _ping_devices() -> None:
+    if _mqtt_client is None:
+        return
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
+        devices = result.scalars().all()
+    for device in devices:
+        _mqtt_client.publish_ping(device.mac_address)
+    logger.debug("Ping enviat a %d dispositius", len(devices))
