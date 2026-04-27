@@ -1,5 +1,12 @@
 # Smart Garden — Backend
 
+## Idioma
+
+- **Comunicació amb l'usuari:** català
+- **Tot artefacte tècnic (commits, comentaris, noms de variables, docstrings):** anglès
+
+---
+
 ## Stack
 
 - **Runtime:** Python 3.12+
