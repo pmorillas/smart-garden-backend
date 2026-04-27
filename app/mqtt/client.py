@@ -79,7 +79,8 @@ async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None
         if mqtt_client is not None:
             zones_result = await db.execute(select(Zone).where(Zone.device_id == device.id))
             zones = zones_result.scalars().all()
-            if zones:
+            unsynced = [z for z in zones if not z.config_synced]
+            if unsynced:
                 config = [
                     {
                         "id": z.id,
@@ -90,14 +91,16 @@ async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None
                     for z in zones
                 ]
                 mqtt_client.publish_zone_config(mac, config)
-                logger.info("Zone config empesa a %s en registrar: %d zones", mac, len(zones))
+                logger.info("Zone config empesa a %s en registrar: %d zones pendents", mac, len(unsynced))
+            else:
+                logger.debug("Zone config ja sincronitzada a %s, no s'empeny", mac)
 
             from app.models.tank import WaterTank
             tanks_result = await db.execute(
                 select(WaterTank).where(WaterTank.device_id == device.id, WaterTank.active == True)  # noqa: E712
             )
             tanks = tanks_result.scalars().all()
-            if tanks:
+            if tanks and mac not in mqtt_client._tank_config_synced:
                 tank_config = [
                     {
                         "id": t.id,
@@ -112,7 +115,10 @@ async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None
                     for t in tanks
                 ]
                 mqtt_client.publish_tank_config(mac, tank_config)
+                mqtt_client._tank_config_synced.add(mac)
                 logger.info("Tank config empesa a %s en registrar: %d tanks", mac, len(tanks))
+            elif tanks:
+                logger.debug("Tank config ja sincronitzada a %s, no s'empeny", mac)
 
 
 async def _handle_ota_status(payload: dict) -> None:
@@ -275,6 +281,7 @@ class MqttClient:
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
         self._ping_sent_at: dict[str, float] = {}
+        self._tank_config_synced: set[str] = set()  # MACs amb tank config ja sincronitzada
 
     def connect(self):
         self._client.connect(settings.mqtt_host, settings.mqtt_port, keepalive=60)
@@ -295,6 +302,10 @@ class MqttClient:
         payload = json.dumps({"version": version, "url": url, "checksum": checksum_sha256})
         self._client.publish(f"smartgarden/ota/{mac}", payload)
         logger.info("OTA publicat a %s: v%s", mac, version)
+
+    def invalidate_tank_config(self, mac: str) -> None:
+        """Marca el tank config com a pendent de re-sincronitzar al proper register."""
+        self._tank_config_synced.discard(mac)
 
     def publish_sensor_request(self, mac: str) -> None:
         self._client.publish(f"smartgarden/sensors/request/{mac}", "{}")
