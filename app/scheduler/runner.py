@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
@@ -49,7 +50,7 @@ def start_scheduler() -> AsyncIOScheduler:
     _scheduler.add_job(
         _poll_sensors,
         "interval",
-        seconds=settings.sensor_poll_interval_seconds,
+        seconds=30,
         id="poll_sensors",
         name="Polling sensors ESP32",
         replace_existing=True,
@@ -241,12 +242,22 @@ async def _check_device_offline() -> None:
 async def _poll_sensors() -> None:
     if _mqtt_client is None:
         return
+    now = time.time()
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
         devices = result.scalars().all()
+    sent = 0
     for device in devices:
-        _mqtt_client.publish_sensor_request(device.mac_address)
-    logger.debug("Sensor poll enviat a %d dispositius", len(devices))
+        dev_status = garden.devices.get(device.mac_address)
+        interval = dev_status.poll_interval_seconds if dev_status else device.poll_interval_seconds
+        last_poll = dev_status.last_poll_sent_at if dev_status else 0.0
+        if now - last_poll >= interval:
+            _mqtt_client.publish_sensor_request(device.mac_address)
+            if dev_status:
+                dev_status.last_poll_sent_at = now
+            sent += 1
+    if sent:
+        logger.debug("Sensor poll enviat a %d dispositius", sent)
 
 
 async def _ping_devices() -> None:

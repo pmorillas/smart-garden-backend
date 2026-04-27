@@ -74,7 +74,7 @@ async def _seed_initial_data() -> None:
         from app.models import Device
         devices_result = await db.execute(select(Device).where(Device.active == True))  # noqa: E712
         for d in devices_result.scalars().all():
-            garden.devices[d.mac_address] = DeviceStatus(d.mac_address, d.name)
+            garden.devices[d.mac_address] = DeviceStatus(d.mac_address, d.name, d.poll_interval_seconds)
 
         # Usuari admin per defecte
         user_result = await db.execute(select(User))

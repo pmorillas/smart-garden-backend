@@ -60,9 +60,11 @@ class TankStatus:
 
 
 class DeviceStatus:
-    def __init__(self, mac: str, name: str = ""):
+    def __init__(self, mac: str, name: str = "", poll_interval_seconds: int = 300):
         self.mac = mac
         self.name = name
+        self.poll_interval_seconds = poll_interval_seconds
+        self.last_poll_sent_at: float = 0.0
         self.last_pong_at: Optional[str] = None
         self.ping_latency_ms: Optional[float] = None
 
@@ -70,6 +72,7 @@ class DeviceStatus:
         return {
             "mac": self.mac,
             "name": self.name,
+            "poll_interval_seconds": self.poll_interval_seconds,
             "last_pong_at": self.last_pong_at,
             "ping_latency_ms": self.ping_latency_ms,
         }

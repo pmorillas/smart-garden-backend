@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Boolean, DateTime
+from sqlalchemy import String, Boolean, DateTime, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -19,5 +19,6 @@ class Device(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
     )
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
 
     zones: Mapped[list["Zone"]] = relationship("Zone", back_populates="device")  # type: ignore[name-defined]
