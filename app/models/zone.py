@@ -13,17 +13,25 @@ class Zone(Base):
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    relay_pin_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    soil_pin_a_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    soil_pin_b_local: Mapped[int | None] = mapped_column(Integer, nullable=True)
     config_synced: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     tank_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("water_tanks.id", ondelete="SET NULL"), nullable=True
     )
 
+    # Peripheral references
+    relay_peripheral_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("peripherals.id", ondelete="SET NULL"), nullable=True
+    )
+    soil_aggregation_mode: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="AVG"
+    )
+
     device: Mapped["Device | None"] = relationship("Device", back_populates="zones")  # type: ignore[name-defined]
     config: Mapped["ZoneConfig | None"] = relationship(
         "ZoneConfig", back_populates="zone", uselist=False, cascade="all, delete-orphan"
+    )
+    soil_sensors: Mapped[list["ZoneSoilSensor"]] = relationship(  # type: ignore[name-defined]
+        "ZoneSoilSensor", cascade="all, delete-orphan", passive_deletes=True
     )
     sensor_readings: Mapped[list["SensorReading"]] = relationship("SensorReading", back_populates="zone", passive_deletes=True)  # type: ignore[name-defined]
     watering_events: Mapped[list["WateringEvent"]] = relationship("WateringEvent", back_populates="zone", passive_deletes=True)  # type: ignore[name-defined]

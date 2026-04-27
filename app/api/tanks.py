@@ -8,10 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user
 from app.database import get_db
-from app.models.tank import WaterTank, TankReading, SENSOR_TYPES
-from app.models import Device
+from app.models.tank import WaterTank, TankReading
 from app.state import garden, TankStatus
-from app.irrigation import actions as irrigation_actions
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +23,7 @@ router = APIRouter(
 class TankCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     device_id: int | None = None
-    sensor_type: str = "binary_single"
-    gpio_pin_1: int | None = Field(default=None, ge=0, le=39)
-    gpio_pin_2: int | None = Field(default=None, ge=0, le=39)
     capacity_liters: float | None = Field(default=None, gt=0)
-    calibration_empty: int | None = Field(default=None, ge=0)
-    calibration_full: int | None = Field(default=None, ge=0)
     low_threshold_pct: int = Field(default=20, ge=0, le=100)
     empty_threshold_pct: int = Field(default=5, ge=0, le=100)
 
@@ -39,12 +32,7 @@ class TankUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     active: bool | None = None
     device_id: int | None = None
-    sensor_type: str | None = None
-    gpio_pin_1: int | None = Field(default=None, ge=0, le=39)
-    gpio_pin_2: int | None = Field(default=None, ge=0, le=39)
     capacity_liters: float | None = Field(default=None, gt=0)
-    calibration_empty: int | None = Field(default=None, ge=0)
-    calibration_full: int | None = Field(default=None, ge=0)
     low_threshold_pct: int | None = Field(default=None, ge=0, le=100)
     empty_threshold_pct: int | None = Field(default=None, ge=0, le=100)
 
@@ -55,42 +43,12 @@ def _to_dict(tank: WaterTank, status: TankStatus | None = None) -> dict:
         "name": tank.name,
         "device_id": tank.device_id,
         "active": tank.active,
-        "sensor_type": tank.sensor_type,
-        "gpio_pin_1": tank.gpio_pin_1,
-        "gpio_pin_2": tank.gpio_pin_2,
         "capacity_liters": tank.capacity_liters,
-        "calibration_empty": tank.calibration_empty,
-        "calibration_full": tank.calibration_full,
+        "peripheral_id": tank.peripheral_id,
         "low_threshold_pct": tank.low_threshold_pct,
         "empty_threshold_pct": tank.empty_threshold_pct,
         "status": status.to_dict() if status else None,
     }
-
-
-async def _push_tank_config(device_id: int, db: AsyncSession) -> None:
-    if irrigation_actions._mqtt_client is None:
-        return
-    result = await db.execute(select(Device).where(Device.id == device_id))
-    device = result.scalar_one_or_none()
-    if device is None:
-        return
-    tanks_result = await db.execute(select(WaterTank).where(WaterTank.device_id == device_id, WaterTank.active == True))  # noqa: E712
-    tanks = tanks_result.scalars().all()
-    config = [
-        {
-            "id": t.id,
-            "sensor_type": t.sensor_type,
-            "pin_1": t.gpio_pin_1,
-            "pin_2": t.gpio_pin_2,
-            "cal_empty": t.calibration_empty,
-            "cal_full": t.calibration_full,
-            "low_pct": t.low_threshold_pct,
-            "empty_pct": t.empty_threshold_pct,
-        }
-        for t in tanks
-    ]
-    irrigation_actions._mqtt_client.publish_tank_config(device.mac_address, config)
-    logger.info("Tank config enviada a %s (%d tanks)", device.mac_address, len(tanks))
 
 
 @router.get("/")
@@ -102,18 +60,11 @@ async def list_tanks(db: AsyncSession = Depends(get_db)):
 
 @router.post("/", status_code=201)
 async def create_tank(body: TankCreate, db: AsyncSession = Depends(get_db)):
-    if body.sensor_type not in SENSOR_TYPES:
-        raise HTTPException(status_code=422, detail=f"Tipus de sensor invàlid: {body.sensor_type}")
     tank = WaterTank(**body.model_dump())
     db.add(tank)
     await db.commit()
     await db.refresh(tank)
-
     garden.tanks[tank.id] = TankStatus(tank.id, tank.name, tank.empty_threshold_pct, tank.low_threshold_pct)
-
-    if body.device_id is not None:
-        await _push_tank_config(body.device_id, db)
-
     return _to_dict(tank, garden.tanks.get(tank.id))
 
 
@@ -134,12 +85,10 @@ async def update_tank(tank_id: int, body: TankUpdate, db: AsyncSession = Depends
     if body.sensor_type is not None and body.sensor_type not in SENSOR_TYPES:
         raise HTTPException(status_code=422, detail=f"Tipus de sensor invàlid: {body.sensor_type}")
 
-    old_device_id = tank.device_id
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(tank, field, value)
     await db.commit()
 
-    # Update in-memory status thresholds
     status = garden.tanks.get(tank_id)
     if status:
         if body.name is not None:
@@ -149,10 +98,6 @@ async def update_tank(tank_id: int, body: TankUpdate, db: AsyncSession = Depends
         if body.low_threshold_pct is not None:
             status.low_threshold_pct = body.low_threshold_pct
 
-    device_id = tank.device_id or old_device_id
-    if device_id is not None:
-        await _push_tank_config(device_id, db)
-
     return {"ok": True}
 
 
@@ -161,12 +106,9 @@ async def delete_tank(tank_id: int, db: AsyncSession = Depends(get_db)):
     tank = await db.get(WaterTank, tank_id)
     if tank is None:
         raise HTTPException(status_code=404, detail="Dipòsit no trobat")
-    device_id = tank.device_id
     await db.delete(tank)
     await db.commit()
     garden.tanks.pop(tank_id, None)
-    if device_id is not None:
-        await _push_tank_config(device_id, db)
 
 
 @router.get("/{tank_id}/readings")
@@ -214,13 +156,16 @@ async def calibrate_tank(tank_id: int, level: str = Query(..., pattern="^(empty|
         raise HTTPException(status_code=400, detail="No hi ha lectures del sensor. Assegura't que l'ESP32 publica dades del dipòsit.")
 
     cal_value = int(reading.raw_value)
-    if level == "empty":
-        tank.calibration_empty = cal_value
-    else:
-        tank.calibration_full = cal_value
+    # Store calibration in the peripheral's extra_config
+    from app.models.peripheral import Peripheral
+    if tank.peripheral_id is not None:
+        peripheral = await db.get(Peripheral, tank.peripheral_id)
+        if peripheral is not None:
+            cfg = peripheral.extra_config or {}
+            if level == "empty":
+                cfg["cal_empty"] = cal_value
+            else:
+                cfg["cal_full"] = cal_value
+            peripheral.extra_config = cfg
     await db.commit()
-
-    if tank.device_id is not None:
-        await _push_tank_config(tank.device_id, db)
-
     return {"ok": True, "level": level, "calibration_value": cal_value}

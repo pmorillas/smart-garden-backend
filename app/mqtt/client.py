@@ -25,6 +25,70 @@ from app.state import garden, ws_manager
 logger = logging.getLogger(__name__)
 
 
+async def _build_hardware_config(device_id: int, db) -> dict:
+    """Build the hardware config payload for an ESP32 device."""
+    from sqlalchemy import select
+    from app.models.peripheral import Peripheral, ZoneSoilSensor
+    from app.models.zone import Zone
+    from app.models.tank import WaterTank
+
+    peripherals_result = await db.execute(
+        select(Peripheral).where(Peripheral.device_id == device_id, Peripheral.enabled == True)  # noqa: E712
+    )
+    peripherals = peripherals_result.scalars().all()
+
+    zones_result = await db.execute(
+        select(Zone).where(Zone.device_id == device_id, Zone.active == True)  # noqa: E712
+    )
+    zones = zones_result.scalars().all()
+
+    zone_dicts = []
+    for z in zones:
+        soil_result = await db.execute(
+            select(ZoneSoilSensor)
+            .where(ZoneSoilSensor.zone_id == z.id)
+            .order_by(ZoneSoilSensor.order_index)
+        )
+        soil_rows = soil_result.scalars().all()
+        zone_dicts.append({
+            "id": z.id,
+            "relay_peripheral_id": z.relay_peripheral_id,
+            "soil_aggregation_mode": z.soil_aggregation_mode,
+            "soil_peripheral_ids": [row.peripheral_id for row in soil_rows],
+        })
+
+    tanks_result = await db.execute(
+        select(WaterTank).where(WaterTank.device_id == device_id, WaterTank.active == True)  # noqa: E712
+    )
+    tanks = tanks_result.scalars().all()
+
+    return {
+        "peripherals": [
+            {
+                "id": p.id,
+                "type": p.type,
+                "name": p.name,
+                "pin1": p.pin1,
+                "pin2": p.pin2,
+                "i2c_address": p.i2c_address,
+                "i2c_bus": p.i2c_bus,
+                "extra_config": p.extra_config,
+            }
+            for p in peripherals
+        ],
+        "zones": zone_dicts,
+        "tanks": [
+            {
+                "id": t.id,
+                "peripheral_id": t.peripheral_id,
+                "low_pct": t.low_threshold_pct,
+                "empty_pct": t.empty_threshold_pct,
+            }
+            for t in tanks
+        ],
+    }
+
+
 async def _persist_soil_reading(zone_id: int, value: float, timestamp: datetime) -> None:
     from app.database import AsyncSessionLocal
     from app.models import SensorReading
@@ -81,44 +145,11 @@ async def _handle_device_register(payload: dict, mqtt_client: "MqttClient | None
             zones = zones_result.scalars().all()
             unsynced = [z for z in zones if not z.config_synced]
             if unsynced:
-                config = [
-                    {
-                        "id": z.id,
-                        "relay_pin": z.relay_pin_local,
-                        "soil_pin_a": z.soil_pin_a_local,
-                        "soil_pin_b": z.soil_pin_b_local,
-                    }
-                    for z in zones
-                ]
-                mqtt_client.publish_zone_config(mac, config)
-                logger.info("Zone config empesa a %s en registrar: %d zones pendents", mac, len(unsynced))
+                hw_payload = await _build_hardware_config(device.id, db)
+                mqtt_client.publish_hardware_config(mac, hw_payload)
+                logger.info("Hardware config empesa a %s en registrar: %d zones pendents", mac, len(unsynced))
             else:
-                logger.debug("Zone config ja sincronitzada a %s, no s'empeny", mac)
-
-            from app.models.tank import WaterTank
-            tanks_result = await db.execute(
-                select(WaterTank).where(WaterTank.device_id == device.id, WaterTank.active == True)  # noqa: E712
-            )
-            tanks = tanks_result.scalars().all()
-            if tanks and mac not in mqtt_client._tank_config_synced:
-                tank_config = [
-                    {
-                        "id": t.id,
-                        "sensor_type": t.sensor_type,
-                        "pin_1": t.gpio_pin_1,
-                        "pin_2": t.gpio_pin_2,
-                        "cal_empty": t.calibration_empty,
-                        "cal_full": t.calibration_full,
-                        "low_pct": t.low_threshold_pct,
-                        "empty_pct": t.empty_threshold_pct,
-                    }
-                    for t in tanks
-                ]
-                mqtt_client.publish_tank_config(mac, tank_config)
-                mqtt_client._tank_config_synced.add(mac)
-                logger.info("Tank config empesa a %s en registrar: %d tanks", mac, len(tanks))
-            elif tanks:
-                logger.debug("Tank config ja sincronitzada a %s, no s'empeny", mac)
+                logger.debug("Hardware config ja sincronitzada a %s, no s'empeny", mac)
 
 
 async def _handle_ota_status(payload: dict) -> None:
@@ -238,8 +269,9 @@ async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
         await auto_resolve_alert("humidity_low", zone_id=zone_id)
 
 
-async def _handle_zone_config_ack(payload: dict, topic: str) -> None:
-    if payload.get("config") != "zones":
+async def _handle_config_ack(payload: dict, topic: str) -> None:
+    config_type = payload.get("config")
+    if config_type != "hardware":
         return
     mac = topic.rsplit("/", 1)[-1]
     status = payload.get("status")
@@ -258,7 +290,7 @@ async def _handle_zone_config_ack(payload: dict, topic: str) -> None:
             update(Zone).where(Zone.device_id == device.id).values(config_synced=synced)
         )
         await db.commit()
-        logger.info("Zone config ACK de %s: %s → config_synced=%s", mac, status, synced)
+        logger.info("Hardware config ACK de %s: %s → config_synced=%s", mac, status, synced)
 
 
 async def _update_device_last_seen(mac: str) -> None:
@@ -316,15 +348,18 @@ class MqttClient:
         self._client.publish(f"smartgarden/ping/{mac}", "{}")
         logger.debug("Ping enviat a %s", mac)
 
-    def publish_zone_config(self, device_mac: str, zones: list[dict]) -> None:
-        payload = json.dumps({"zones": zones})
-        self._client.publish(f"smartgarden/config/zones/{device_mac}", payload)
-        logger.info("Zone config publicada a %s (%d zones)", device_mac, len(zones))
-
-    def publish_tank_config(self, device_mac: str, tanks: list[dict]) -> None:
-        payload = json.dumps({"tanks": tanks})
-        self._client.publish(f"smartgarden/config/tanks/{device_mac}", payload)
-        logger.info("Tank config publicada a %s (%d tanks)", device_mac, len(tanks))
+    def publish_hardware_config(self, device_mac: str, payload: dict) -> None:
+        self._client.publish(
+            f"smartgarden/config/hardware/{device_mac}",
+            json.dumps(payload),
+        )
+        logger.info(
+            "Hardware config publicada a %s (%d perifèrics, %d zones, %d tanks)",
+            device_mac,
+            len(payload.get("peripherals", [])),
+            len(payload.get("zones", [])),
+            len(payload.get("tanks", [])),
+        )
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         if reason_code == 0:
@@ -356,7 +391,7 @@ class MqttClient:
 
         if topic.startswith("smartgarden/devices/ack/"):
             asyncio.run_coroutine_threadsafe(
-                _handle_zone_config_ack(payload, topic), self._loop
+                _handle_config_ack(payload, topic), self._loop
             )
             return
 

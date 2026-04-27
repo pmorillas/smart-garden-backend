@@ -99,3 +99,32 @@ async def delete_device(device_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Dispositiu no trobat")
     await db.delete(device)
     await db.commit()
+
+
+@router.post("/{device_id}/push-hardware-config")
+async def push_hardware_config(device_id: int, db: AsyncSession = Depends(get_db)):
+    """Build and publish the full hardware config (peripherals + zones + tanks) to the ESP32."""
+    from app.irrigation import actions as irrigation_actions
+    from app.mqtt.client import _build_hardware_config
+    from sqlalchemy import update
+    from app.models.zone import Zone
+
+    device = await db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="Dispositiu no trobat")
+    if irrigation_actions._mqtt_client is None:
+        raise HTTPException(status_code=503, detail="MQTT no disponible")
+
+    payload = await _build_hardware_config(device_id, db)
+    irrigation_actions._mqtt_client.publish_hardware_config(device.mac_address, payload)
+
+    await db.execute(update(Zone).where(Zone.device_id == device_id).values(config_synced=False))
+    await db.commit()
+
+    return {
+        "ok": True,
+        "mac": device.mac_address,
+        "peripherals": len(payload["peripherals"]),
+        "zones": len(payload["zones"]),
+        "tanks": len(payload["tanks"]),
+    }

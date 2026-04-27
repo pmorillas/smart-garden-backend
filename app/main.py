@@ -22,6 +22,7 @@ from app.api import alert_rules as alert_rules_module
 from app.api import push as push_module
 from app.api import firmware as firmware_module
 from app.api import tanks as tanks_module
+from app.api import peripherals as peripherals_module
 from app.irrigation import actions as irrigation_actions
 from app.scheduler import runner as scheduler_runner
 from app.state import garden, ZoneStatus, TankStatus, DeviceStatus
@@ -41,6 +42,7 @@ def _run_migrations() -> None:
 
 async def _seed_initial_data() -> None:
     from app.models import Zone, ZoneConfig, User, WaterTank
+    from app.models.peripheral import Peripheral, ZoneSoilSensor
     from app.core.security import hash_password
 
     async with AsyncSessionLocal() as db:
@@ -49,13 +51,33 @@ async def _seed_initial_data() -> None:
         zones = result.scalars().all()
 
         if not zones:
-            logger.info("Seed: creant zones per defecte")
-            zone1 = Zone(name="Zona 1", active=True, relay_pin_local=14, soil_pin_a_local=32, soil_pin_b_local=33)
-            zone2 = Zone(name="Zona 2", active=True, relay_pin_local=27, soil_pin_a_local=34, soil_pin_b_local=35)
+            logger.info("Seed: creant zones i perifèrics per defecte")
+            zone1 = Zone(name="Zona 1", active=True)
+            zone2 = Zone(name="Zona 2", active=True)
             db.add_all([zone1, zone2])
             await db.flush()
             db.add(ZoneConfig(zone_id=zone1.id))
             db.add(ZoneConfig(zone_id=zone2.id))
+
+            # Default peripherals matching confirmed hardware pinout
+            relay1 = Peripheral(name="Bomba Zona 1", type="RELAY", pin1=14)
+            relay2 = Peripheral(name="Bomba Zona 2", type="RELAY", pin1=27)
+            soil1a = Peripheral(name="Terra Z1-A", type="SOIL_ADC", pin1=32)
+            soil1b = Peripheral(name="Terra Z1-B", type="SOIL_ADC", pin1=33)
+            soil2a = Peripheral(name="Terra Z2-A", type="SOIL_ADC", pin1=34)
+            soil2b = Peripheral(name="Terra Z2-B", type="SOIL_ADC", pin1=35)
+            htu21d = Peripheral(name="HTU21D", type="HTU21D", i2c_bus=0)
+            bh1750 = Peripheral(name="BH1750", type="BH1750", i2c_bus=0, i2c_address=0x23)
+            db.add_all([relay1, relay2, soil1a, soil1b, soil2a, soil2b, htu21d, bh1750])
+            await db.flush()
+
+            zone1.relay_peripheral_id = relay1.id
+            zone2.relay_peripheral_id = relay2.id
+            db.add(ZoneSoilSensor(zone_id=zone1.id, peripheral_id=soil1a.id, order_index=0))
+            db.add(ZoneSoilSensor(zone_id=zone1.id, peripheral_id=soil1b.id, order_index=1))
+            db.add(ZoneSoilSensor(zone_id=zone2.id, peripheral_id=soil2a.id, order_index=0))
+            db.add(ZoneSoilSensor(zone_id=zone2.id, peripheral_id=soil2b.id, order_index=1))
+
             await db.commit()
             await db.refresh(zone1)
             await db.refresh(zone2)
@@ -143,6 +165,7 @@ app.include_router(alert_rules_module.router)
 app.include_router(push_module.router)
 app.include_router(firmware_module.router)
 app.include_router(tanks_module.router)
+app.include_router(peripherals_module.router)
 
 
 @app.get("/health")

@@ -5,8 +5,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
-SENSOR_TYPES = ("binary_single", "binary_dual", "ultrasonic", "pressure_adc", "capacitive_adc")
-
 
 class WaterTank(Base):
     __tablename__ = "water_tanks"
@@ -17,18 +15,12 @@ class WaterTank(Base):
         Integer, ForeignKey("devices.id", ondelete="SET NULL"), nullable=True
     )
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    sensor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="binary_single")
-    # pin_1: trigger (ultrasonic) / data pin (binary) / ADC pin
-    # pin_2: echo (ultrasonic) / top float (binary_dual)
-    gpio_pin_1: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    gpio_pin_2: Mapped[int | None] = mapped_column(Integer, nullable=True)
     capacity_liters: Mapped[float | None] = mapped_column(Float, nullable=True)
-    # For ultrasonic: distance in cm (empty = sensor far from water, full = sensor close)
-    # For ADC: raw ADC value
-    calibration_empty: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    calibration_full: Mapped[int | None] = mapped_column(Integer, nullable=True)
     low_threshold_pct: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     empty_threshold_pct: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    peripheral_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("peripherals.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class TankReading(Base):
