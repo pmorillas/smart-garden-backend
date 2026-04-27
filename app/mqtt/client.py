@@ -447,8 +447,10 @@ class MqttClient:
             values = payload.get("values")
             if isinstance(values, list) and values:
                 avg = sum(values) / len(values)
+                zone.soil_humidity_values = [round(v, 1) for v in values]
             elif "humidity_pct" in payload:
                 avg = payload["humidity_pct"]
+                zone.soil_humidity_values = [round(avg, 1)]
             else:
                 return
 

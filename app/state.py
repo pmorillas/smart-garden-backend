@@ -18,6 +18,7 @@ class ZoneStatus:
         self.name = name
         self.tank_id = tank_id
         self.soil_humidity_avg: Optional[float] = None
+        self.soil_humidity_values: list[float] = []
         self.is_watering: bool = False
         self.last_watered_at: Optional[str] = None
         self.active_event_id: Optional[int] = None
@@ -27,6 +28,7 @@ class ZoneStatus:
             "id": self.id,
             "name": self.name,
             "soil_humidity_avg": self.soil_humidity_avg,
+            "soil_humidity_values": self.soil_humidity_values,
             "is_watering": self.is_watering,
             "last_watered_at": self.last_watered_at,
         }
