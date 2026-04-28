@@ -16,30 +16,30 @@ depends_on = None
 
 def upgrade() -> None:
     # sensor_readings.zone_id: SET NULL → CASCADE
-    op.drop_constraint("fk_sensor_readings_zone_id_zones", "sensor_readings", type_="foreignkey")
+    op.drop_constraint("sensor_readings_zone_id_fkey", "sensor_readings", type_="foreignkey")
     op.create_foreign_key(
-        "fk_sensor_readings_zone_id_zones", "sensor_readings", "zones",
+        "sensor_readings_zone_id_fkey", "sensor_readings", "zones",
         ["zone_id"], ["id"], ondelete="CASCADE"
     )
 
     # sensor_readings.device_id: SET NULL → CASCADE
-    op.drop_constraint("fk_sensor_readings_device_id_devices", "sensor_readings", type_="foreignkey")
+    op.drop_constraint("sensor_readings_device_id_fkey", "sensor_readings", type_="foreignkey")
     op.create_foreign_key(
-        "fk_sensor_readings_device_id_devices", "sensor_readings", "devices",
+        "sensor_readings_device_id_fkey", "sensor_readings", "devices",
         ["device_id"], ["id"], ondelete="CASCADE"
     )
 
     # alerts.zone_id: SET NULL → CASCADE
-    op.drop_constraint("fk_alerts_zone_id_zones", "alerts", type_="foreignkey")
+    op.drop_constraint("alerts_zone_id_fkey", "alerts", type_="foreignkey")
     op.create_foreign_key(
-        "fk_alerts_zone_id_zones", "alerts", "zones",
+        "alerts_zone_id_fkey", "alerts", "zones",
         ["zone_id"], ["id"], ondelete="CASCADE"
     )
 
     # alerts.device_id: SET NULL → CASCADE
-    op.drop_constraint("fk_alerts_device_id_devices", "alerts", type_="foreignkey")
+    op.drop_constraint("alerts_device_id_fkey", "alerts", type_="foreignkey")
     op.create_foreign_key(
-        "fk_alerts_device_id_devices", "alerts", "devices",
+        "alerts_device_id_fkey", "alerts", "devices",
         ["device_id"], ["id"], ondelete="CASCADE"
     )
 
@@ -58,26 +58,26 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("data_cleanup_logs")
 
-    op.drop_constraint("fk_alerts_device_id_devices", "alerts", type_="foreignkey")
+    op.drop_constraint("alerts_device_id_fkey", "alerts", type_="foreignkey")
     op.create_foreign_key(
-        "fk_alerts_device_id_devices", "alerts", "devices",
+        "alerts_device_id_fkey", "alerts", "devices",
         ["device_id"], ["id"], ondelete="SET NULL"
     )
 
-    op.drop_constraint("fk_alerts_zone_id_zones", "alerts", type_="foreignkey")
+    op.drop_constraint("alerts_zone_id_fkey", "alerts", type_="foreignkey")
     op.create_foreign_key(
-        "fk_alerts_zone_id_zones", "alerts", "zones",
+        "alerts_zone_id_fkey", "alerts", "zones",
         ["zone_id"], ["id"], ondelete="SET NULL"
     )
 
-    op.drop_constraint("fk_sensor_readings_device_id_devices", "sensor_readings", type_="foreignkey")
+    op.drop_constraint("sensor_readings_device_id_fkey", "sensor_readings", type_="foreignkey")
     op.create_foreign_key(
-        "fk_sensor_readings_device_id_devices", "sensor_readings", "devices",
+        "sensor_readings_device_id_fkey", "sensor_readings", "devices",
         ["device_id"], ["id"], ondelete="SET NULL"
     )
 
-    op.drop_constraint("fk_sensor_readings_zone_id_zones", "sensor_readings", type_="foreignkey")
+    op.drop_constraint("sensor_readings_zone_id_fkey", "sensor_readings", type_="foreignkey")
     op.create_foreign_key(
-        "fk_sensor_readings_zone_id_zones", "sensor_readings", "zones",
+        "sensor_readings_zone_id_fkey", "sensor_readings", "zones",
         ["zone_id"], ["id"], ondelete="SET NULL"
     )
