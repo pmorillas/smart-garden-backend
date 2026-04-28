@@ -15,40 +15,32 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # sensor_readings: SET NULL → CASCADE
-    op.alter_column(
-        "sensor_readings", "zone_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        existing_server_default=None,
-        server_default=None,
-        postgresql_ondelete="CASCADE",
-    )
-    op.alter_column(
-        "sensor_readings", "device_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        existing_server_default=None,
-        server_default=None,
-        postgresql_ondelete="CASCADE",
+    # sensor_readings.zone_id: SET NULL → CASCADE
+    op.drop_constraint("fk_sensor_readings_zone_id_zones", "sensor_readings", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_sensor_readings_zone_id_zones", "sensor_readings", "zones",
+        ["zone_id"], ["id"], ondelete="CASCADE"
     )
 
-    # alerts: SET NULL → CASCADE
-    op.alter_column(
-        "alerts", "zone_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        existing_server_default=None,
-        server_default=None,
-        postgresql_ondelete="CASCADE",
+    # sensor_readings.device_id: SET NULL → CASCADE
+    op.drop_constraint("fk_sensor_readings_device_id_devices", "sensor_readings", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_sensor_readings_device_id_devices", "sensor_readings", "devices",
+        ["device_id"], ["id"], ondelete="CASCADE"
     )
-    op.alter_column(
-        "alerts", "device_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        existing_server_default=None,
-        server_default=None,
-        postgresql_ondelete="CASCADE",
+
+    # alerts.zone_id: SET NULL → CASCADE
+    op.drop_constraint("fk_alerts_zone_id_zones", "alerts", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_alerts_zone_id_zones", "alerts", "zones",
+        ["zone_id"], ["id"], ondelete="CASCADE"
+    )
+
+    # alerts.device_id: SET NULL → CASCADE
+    op.drop_constraint("fk_alerts_device_id_devices", "alerts", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_alerts_device_id_devices", "alerts", "devices",
+        ["device_id"], ["id"], ondelete="CASCADE"
     )
 
     # New table: data_cleanup_logs
@@ -66,27 +58,26 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("data_cleanup_logs")
 
-    op.alter_column(
-        "alerts", "device_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        postgresql_ondelete="SET NULL",
+    op.drop_constraint("fk_alerts_device_id_devices", "alerts", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_alerts_device_id_devices", "alerts", "devices",
+        ["device_id"], ["id"], ondelete="SET NULL"
     )
-    op.alter_column(
-        "alerts", "zone_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        postgresql_ondelete="SET NULL",
+
+    op.drop_constraint("fk_alerts_zone_id_zones", "alerts", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_alerts_zone_id_zones", "alerts", "zones",
+        ["zone_id"], ["id"], ondelete="SET NULL"
     )
-    op.alter_column(
-        "sensor_readings", "device_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        postgresql_ondelete="SET NULL",
+
+    op.drop_constraint("fk_sensor_readings_device_id_devices", "sensor_readings", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_sensor_readings_device_id_devices", "sensor_readings", "devices",
+        ["device_id"], ["id"], ondelete="SET NULL"
     )
-    op.alter_column(
-        "sensor_readings", "zone_id",
-        existing_type=sa.Integer(),
-        nullable=True,
-        postgresql_ondelete="SET NULL",
+
+    op.drop_constraint("fk_sensor_readings_zone_id_zones", "sensor_readings", type_="foreignkey")
+    op.create_foreign_key(
+        "fk_sensor_readings_zone_id_zones", "sensor_readings", "zones",
+        ["zone_id"], ["id"], ondelete="SET NULL"
     )
