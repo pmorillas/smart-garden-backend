@@ -35,5 +35,5 @@ def start_retention_scheduler() -> None:
         3600,
         lambda: asyncio.create_task(_run_retention()),
     )
-    logger.info("Retention policy scheduler started (every 24h, retention=%d days)", retention_days)
+    logger.info("Retention policy scheduler started (every 24h, retention=%d days)", settings.data_retention_days)
 
