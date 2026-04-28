@@ -11,6 +11,7 @@ from app.models.alert_rule import AlertRule
 from app.models.tank import WaterTank, TankReading
 from app.models.push import PushSubscription
 from app.models.firmware import FirmwareRelease, FirmwareUpdate
+from app.models.cleanup_log import DataCleanupLog
 
 __all__ = [
     "Base",
@@ -31,4 +32,5 @@ __all__ = [
     "PushSubscription",
     "FirmwareRelease",
     "FirmwareUpdate",
+    "DataCleanupLog",
 ]

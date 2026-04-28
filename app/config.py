@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     sensor_poll_interval_seconds: int = 300
     sensor_ping_interval_seconds: int = 60
 
+    # Retenció de dades històriques (en dies). 0 = desactivat.
+    data_retention_days: int = 0
+
     # Web Push (VAPID)
     vapid_public_key: str = ""
     vapid_private_key: str = ""

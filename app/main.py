@@ -23,8 +23,10 @@ from app.api import push as push_module
 from app.api import firmware as firmware_module
 from app.api import tanks as tanks_module
 from app.api import peripherals as peripherals_module
+from app.api import cleanup as cleanup_module
 from app.irrigation import actions as irrigation_actions
 from app.scheduler import runner as scheduler_runner
+from app.services import retention as retention_service
 from app.state import garden, ZoneStatus, TankStatus, DeviceStatus
 
 logger = logging.getLogger(__name__)
@@ -132,6 +134,7 @@ async def lifespan(app: FastAPI):
     scheduler_runner.set_mqtt_client(_mqtt_client)
 
     scheduler_runner.start_scheduler()
+    retention_service.start_retention_scheduler()
 
     yield
 
@@ -166,6 +169,7 @@ app.include_router(push_module.router)
 app.include_router(firmware_module.router)
 app.include_router(tanks_module.router)
 app.include_router(peripherals_module.router)
+app.include_router(cleanup_module.router)
 
 
 @app.get("/health")
