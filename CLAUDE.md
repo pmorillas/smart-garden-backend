@@ -73,7 +73,8 @@ sensor_readings
   id, zone_id, sensor_type (soil_humidity | ambient_temperature | ambient_humidity | light_lux), value, raw_value (nullable), timestamp
 
 watering_events
-  id, zone_id, program_id, started_at, ended_at, trigger_type, duration_seconds
+  id, zone_id, program_id, started_at, ended_at, trigger_type, duration_seconds,
+  outcome (active|skipped, default active), skip_reason (nullable)
 
 programs
   id, zone_id, name, active, condition_logic, duration_seconds, conditions (JSONB)
