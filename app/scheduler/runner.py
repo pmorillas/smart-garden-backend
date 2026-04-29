@@ -11,8 +11,8 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import AsyncSessionLocal
-from app.irrigation.conditions import evaluate_program
-from app.irrigation.actions import trigger_watering
+from app.irrigation.conditions import evaluate_program, get_schedule_skip_reason
+from app.irrigation.actions import trigger_watering, record_skip_event
 from app.models import Program, ProgramZone, WateringEvent, ZoneConfig, Device
 from app.state import garden
 
@@ -135,13 +135,22 @@ async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
         soil_humidity = first_zone_state.soil_humidity_avg
 
     if not evaluate_program(program, now, soil_humidity, ambient_temp):
-        logger.debug(
-            "Programa %s (%s): condicions no complides (hora=%s, hum=%.1f, temp=%s)",
-            program.id, program.name,
-            now.strftime("%H:%M"),
-            soil_humidity if soil_humidity is not None else -1,
-            ambient_temp,
-        )
+        skip_reason = get_schedule_skip_reason(program, now, soil_humidity, ambient_temp)
+        if skip_reason:
+            logger.info(
+                "Programa %s (%s): schedule actiu però condicions no complides → skip '%s'",
+                program.id, program.name, skip_reason,
+            )
+            for pz in program.program_zones:
+                await record_skip_event(pz.zone_id, program.id, skip_reason)
+        else:
+            logger.debug(
+                "Programa %s (%s): condicions no complides (hora=%s, hum=%.1f, temp=%s)",
+                program.id, program.name,
+                now.strftime("%H:%M"),
+                soil_humidity if soil_humidity is not None else -1,
+                ambient_temp,
+            )
         return
 
     # Determine which zones are eligible (not watering + cooldown elapsed)
@@ -152,10 +161,12 @@ async def _evaluate_and_trigger(program: Program, now: datetime) -> None:
             logger.warning("Programa %s: zona %s no trobada en memòria, saltant", program.id, pz.zone_id)
             continue
         if zone_state.is_watering:
-            logger.debug("Programa %s: zona %s ja regant, saltant", program.id, pz.zone_id)
+            logger.info("Programa %s: zona %s ja regant → skip", program.id, pz.zone_id)
+            await record_skip_event(pz.zone_id, program.id, "already_watering")
             continue
         if not await _check_cooldown(pz.zone_id):
-            logger.debug("Zona %s: cooldown actiu, saltant", pz.zone_id)
+            logger.info("Zona %s: cooldown actiu → skip", pz.zone_id)
+            await record_skip_event(pz.zone_id, program.id, "cooldown_active")
             continue
         duration = pz.duration_override_seconds or program.duration_seconds
         eligible.append((pz.zone_id, duration))

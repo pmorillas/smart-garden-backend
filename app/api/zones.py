@@ -228,6 +228,8 @@ async def get_zone_history(zone_id: int, hours: int = 24, db: AsyncSession = Dep
                 "ended_at": e.ended_at.isoformat() if e.ended_at else None,
                 "duration_seconds": e.duration_seconds,
                 "trigger_type": e.trigger_type,
+                "outcome": e.outcome,
+                "skip_reason": e.skip_reason,
             }
             for e in events
         ],

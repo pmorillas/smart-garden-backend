@@ -26,6 +26,8 @@ class WateringEvent(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    skip_reason: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     zone: Mapped["Zone"] = relationship("Zone", back_populates="watering_events")  # type: ignore[name-defined]
     program: Mapped["Program | None"] = relationship("Program", back_populates="watering_events")  # type: ignore[name-defined]

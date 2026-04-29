@@ -16,6 +16,24 @@ def set_mqtt_client(client) -> None:
     _mqtt_client = client
 
 
+async def record_skip_event(
+    zone_id: int,
+    program_id: int | None,
+    skip_reason: str,
+    trigger_type: str = "schedule",
+) -> None:
+    async with AsyncSessionLocal() as db:
+        db.add(WateringEvent(
+            zone_id=zone_id,
+            program_id=program_id,
+            started_at=datetime.now(timezone.utc),
+            trigger_type=trigger_type,
+            outcome="skipped",
+            skip_reason=skip_reason,
+        ))
+        await db.commit()
+
+
 async def trigger_watering(
     zone_id: int,
     duration_seconds: int,
@@ -24,12 +42,16 @@ async def trigger_watering(
 ) -> bool:
     zone = garden.zones.get(zone_id)
     if zone is None or zone.is_watering:
+        if zone is not None and zone.is_watering and program_id is not None:
+            await record_skip_event(zone_id, program_id, "already_watering", trigger_type)
         return False
 
     if zone.tank_id is not None:
         tank = garden.tanks.get(zone.tank_id)
         if tank is not None and tank.is_empty():
             logger.warning("Zona %d: reg bloquejat — dipòsit %d buit (%s)", zone_id, zone.tank_id, tank.sensor_state)
+            if program_id is not None:
+                await record_skip_event(zone_id, program_id, "tank_empty", trigger_type)
             from app.notifications.push import maybe_create_alert
             await maybe_create_alert(
                 "tank_empty",
