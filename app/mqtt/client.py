@@ -273,6 +273,47 @@ async def _handle_ota_status(payload: dict) -> None:
     logger.info("OTA status rebut: MAC=%s status=%s v=%s error=%s", mac, status, version, error)
 
 
+async def _handle_float_binary_tank(
+    tank_id: int,
+    peripheral_id: int | None,
+    pin_states: list[int],
+    mac: str | None,
+    now: datetime,
+) -> None:
+    """Process FLOAT_BINARY N-pin tank reading: DB lookup, state computation, persist, alert."""
+    from app.database import AsyncSessionLocal
+    from app.models.peripheral import Peripheral
+
+    pins_config: list[dict] = []
+    if peripheral_id is not None:
+        async with AsyncSessionLocal() as db:
+            p = await db.get(Peripheral, peripheral_id)
+            if p and p.extra_config and "pins" in p.extra_config:
+                pins_config = p.extra_config["pins"]
+
+    level_percent = _compute_float_binary_level(pin_states, pins_config)
+    raw_value = float(sum(s << i for i, s in enumerate(pin_states)))
+
+    tank = garden.tanks.get(tank_id)
+    if tank is None:
+        return
+
+    sensor_state = "empty" if level_percent == 0.0 else (
+        "low" if level_percent <= tank.low_threshold_pct else "ok"
+    )
+    tank.level_percent = level_percent
+    tank.sensor_state = sensor_state
+    tank.last_reading_at = now.isoformat()
+
+    await _persist_tank_reading(tank_id, raw_value, level_percent, sensor_state, now)
+    await _check_tank_alerts(tank_id, sensor_state, level_percent)
+    if mac:
+        await _update_device_last_seen(mac)
+
+    from app.api.websocket import ws_manager
+    await ws_manager.broadcast(garden.to_dict())
+
+
 def _compute_float_binary_level(pin_states: list[int], pins_config: list[dict]) -> float:
     """Compute level_pct from raw pin states using extra_config.pins.
 
@@ -616,22 +657,14 @@ class MqttClient:
 
             pin_states = payload.get("pin_states")
             if pin_states is not None:
-                # FLOAT_BINARY N-pin format: firmware reports raw digital states,
-                # backend computes level_pct using extra_config.pins
-                peripheral_id = payload.get("peripheral_id")
-                pins_config: list[dict] = []
-                if peripheral_id is not None:
-                    from app.database import AsyncSessionLocal
-                    from app.models.peripheral import Peripheral
-                    async with AsyncSessionLocal() as db:
-                        p = await db.get(Peripheral, peripheral_id)
-                        if p and p.extra_config and "pins" in p.extra_config:
-                            pins_config = p.extra_config["pins"]
-                level_percent = _compute_float_binary_level(pin_states, pins_config)
-                raw_value = float(sum(s << i for i, s in enumerate(pin_states)))
-                sensor_state = "empty" if level_percent == 0.0 else (
-                    "low" if level_percent <= tank.low_threshold_pct else "ok"
+                # FLOAT_BINARY N-pin: all processing (DB lookup + state) is async
+                asyncio.run_coroutine_threadsafe(
+                    _handle_float_binary_tank(
+                        tank_id, payload.get("peripheral_id"), pin_states, mac, now
+                    ),
+                    self._loop,
                 )
+                return
             else:
                 raw_value = payload.get("raw_value")
                 if raw_value is None:
