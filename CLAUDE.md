@@ -99,6 +99,8 @@ firmware_updates
 |---|---|---|
 | ESP32 → Backend | `smartgarden/sensors/soil/{zone_id}` | `{"zone_id":1,"raw_values":[2100],"mac":"...","timestamp":...}` (firmware≥1.4.0) |
 | ESP32 → Backend | `smartgarden/sensors/soil/{zone_id}` | `{"zone_id":1,"values":[42],"mac":"...","timestamp":...}` (legacy, < 1.4.0) |
+| ESP32 → Backend | `smartgarden/sensors/tank/{tank_id}` | `{"peripheral_id":3,"pin_states":[0,1,0],"mac":"...","timestamp":...}` (FLOAT_BINARY N-pins, ≥1.5.0) |
+| ESP32 → Backend | `smartgarden/sensors/tank/{tank_id}` | `{"raw_value":25.3,"level_pct":70.0,"state":"ok","mac":"..."}` (HC_SR04 / llegat) |
 | ESP32 → Backend | `smartgarden/sensors/ambient` | `{"temp":22.5,"humidity":60,"light_lux":1200,"mac":"..."}` |
 | ESP32 → Backend | `smartgarden/devices/register` | `{"mac":"...","ip":"...","firmware":"1.1.0"}` (retained) |
 | ESP32 → Backend | `smartgarden/devices/ota_status` | `{"mac":"...","status":"success","version":"1.2.0"}` |
