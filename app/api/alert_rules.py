@@ -19,6 +19,7 @@ class AlertRuleCreate(BaseModel):
     alert_type: str
     enabled: bool = True
     zone_id: int | None = None
+    tank_id: int | None = None
     threshold: float | None = None
     cooldown_minutes: int = Field(default=60, ge=0, le=10080)
     notification_channels: list[str] = ["push"]
@@ -27,6 +28,7 @@ class AlertRuleCreate(BaseModel):
 class AlertRuleUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     enabled: bool | None = None
+    tank_id: int | None = None
     threshold: float | None = None
     cooldown_minutes: int | None = Field(default=None, ge=0, le=10080)
     notification_channels: list[str] | None = None
@@ -39,6 +41,7 @@ def _to_dict(r: AlertRule) -> dict:
         "alert_type": r.alert_type,
         "enabled": r.enabled,
         "zone_id": r.zone_id,
+        "tank_id": r.tank_id,
         "threshold": r.threshold,
         "cooldown_minutes": r.cooldown_minutes,
         "notification_channels": r.notification_channels,

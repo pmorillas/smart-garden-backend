@@ -273,6 +273,26 @@ async def _handle_ota_status(payload: dict) -> None:
     logger.info("OTA status rebut: MAC=%s status=%s v=%s error=%s", mac, status, version, error)
 
 
+def _compute_float_binary_level(pin_states: list[int], pins_config: list[dict]) -> float:
+    """Compute level_pct from raw pin states using extra_config.pins.
+
+    pullup mode: pin is active when LOW (state=0) — wire to GND via water
+    pulldown mode: pin is active when HIGH (state=1) — wire to 3.3V via water
+    Returns the highest level_pct among active pins, or 0.0 if none are active.
+    """
+    active_levels = []
+    for i, state in enumerate(pin_states):
+        if i >= len(pins_config):
+            break
+        pin = pins_config[i]
+        mode = pin.get("mode", "pullup")
+        level_pct = pin.get("level_pct", 0)
+        is_active = (state == 0) if mode == "pullup" else (state == 1)
+        if is_active:
+            active_levels.append(level_pct)
+    return float(max(active_levels)) if active_levels else 0.0
+
+
 async def _persist_tank_reading(tank_id: int, raw_value: float, level_percent: float | None, sensor_state: str, timestamp: datetime) -> None:
     from app.database import AsyncSessionLocal
     from app.models.tank import TankReading
@@ -314,6 +334,20 @@ async def _check_tank_alerts(tank_id: int, sensor_state: str, level_percent: flo
                 )
         else:
             await auto_resolve_alert("tank_low")
+
+    # Check configurable tank_level_low alert rules (threshold-based, per-tank)
+    if level_percent is not None:
+        rule = await get_alert_rule("tank_level_low", tank_id=tank_id)
+        if rule is not None:
+            threshold = rule.threshold if rule.threshold is not None else tank.low_threshold_pct
+            if level_percent <= threshold:
+                await maybe_create_alert(
+                    "tank_level_low",
+                    f"Dipòsit {tank.name}: nivell baix ({level_percent:.0f}% ≤ {threshold:.0f}%)",
+                    tank_id=tank_id,
+                )
+            else:
+                await auto_resolve_alert("tank_level_low", tank_id=tank_id)
 
 
 async def _check_humidity_alert(zone_id: int, humidity_pct: float) -> None:
@@ -580,12 +614,30 @@ class MqttClient:
             if tank is None:
                 return
 
-            raw_value = payload.get("raw_value")
-            if raw_value is None:
-                return
-
-            level_percent = payload.get("level_pct")
-            sensor_state = payload.get("state", "ok")
+            pin_states = payload.get("pin_states")
+            if pin_states is not None:
+                # FLOAT_BINARY N-pin format: firmware reports raw digital states,
+                # backend computes level_pct using extra_config.pins
+                peripheral_id = payload.get("peripheral_id")
+                pins_config: list[dict] = []
+                if peripheral_id is not None:
+                    from app.database import AsyncSessionLocal
+                    from app.models.peripheral import Peripheral
+                    async with AsyncSessionLocal() as db:
+                        p = await db.get(Peripheral, peripheral_id)
+                        if p and p.extra_config and "pins" in p.extra_config:
+                            pins_config = p.extra_config["pins"]
+                level_percent = _compute_float_binary_level(pin_states, pins_config)
+                raw_value = float(sum(s << i for i, s in enumerate(pin_states)))
+                sensor_state = "empty" if level_percent == 0.0 else (
+                    "low" if level_percent <= tank.low_threshold_pct else "ok"
+                )
+            else:
+                raw_value = payload.get("raw_value")
+                if raw_value is None:
+                    return
+                level_percent = payload.get("level_pct")
+                sensor_state = payload.get("state", "ok")
 
             tank.level_percent = level_percent
             tank.sensor_state = sensor_state

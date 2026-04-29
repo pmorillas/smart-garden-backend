@@ -48,7 +48,12 @@ async def has_active_alert(alert_type: str, zone_id: int | None = None, device_i
         return result.scalar_one_or_none() is not None
 
 
-async def auto_resolve_alert(alert_type: str, zone_id: int | None = None, device_id: int | None = None) -> None:
+async def auto_resolve_alert(
+    alert_type: str,
+    zone_id: int | None = None,
+    device_id: int | None = None,
+    tank_id: int | None = None,
+) -> None:
     async with AsyncSessionLocal() as db:
         q = select(Alert).where(Alert.type == alert_type, Alert.resolved == False)  # noqa: E712
         if zone_id is not None:
@@ -110,10 +115,34 @@ async def _send_push_to_all(title: str, body: str, tag: str = "") -> None:
             await db.commit()
 
 
-async def get_alert_rule(alert_type: str, zone_id: int | None = None):
-    """Finds the best enabled AlertRule: zone-specific first, then global (zone_id=NULL)."""
+async def get_alert_rule(alert_type: str, zone_id: int | None = None, tank_id: int | None = None):
+    """Finds the best enabled AlertRule.
+
+    For zone alerts: zone-specific first, then global (zone_id=NULL).
+    For tank alerts: tank-specific first, then global (tank_id=NULL).
+    """
     from app.models.alert_rule import AlertRule
     async with AsyncSessionLocal() as db:
+        if tank_id is not None:
+            result = await db.execute(
+                select(AlertRule).where(
+                    AlertRule.alert_type == alert_type,
+                    AlertRule.tank_id == tank_id,
+                    AlertRule.enabled == True,  # noqa: E712
+                )
+            )
+            rule = result.scalar_one_or_none()
+            if rule is not None:
+                return rule
+            result = await db.execute(
+                select(AlertRule).where(
+                    AlertRule.alert_type == alert_type,
+                    AlertRule.tank_id == None,  # noqa: E711
+                    AlertRule.enabled == True,  # noqa: E712
+                )
+            )
+            return result.scalar_one_or_none()
+
         if zone_id is not None:
             result = await db.execute(
                 select(AlertRule).where(
@@ -140,9 +169,10 @@ async def maybe_create_alert(
     message: str,
     zone_id: int | None = None,
     device_id: int | None = None,
+    tank_id: int | None = None,
 ) -> "Alert | None":
     """Create alert only if an enabled rule exists and cooldown has elapsed."""
-    rule = await get_alert_rule(alert_type, zone_id)
+    rule = await get_alert_rule(alert_type, zone_id=zone_id, tank_id=tank_id)
     if rule is None:
         return None
 
@@ -168,4 +198,5 @@ def _title_for_type(alert_type: str) -> str:
         "water_failed":    "Smart Garden — Error de reg",
         "water_completed": "Smart Garden — Reg completat",
         "sensor_error":    "Smart Garden — Error de sensor",
+        "tank_level_low":  "Smart Garden — Nivell de dipòsit baix",
     }.get(alert_type, "Smart Garden")

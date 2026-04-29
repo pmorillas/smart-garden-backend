@@ -9,6 +9,7 @@ ALERT_TYPES = (
     "water_completed",
     "water_failed",
     "sensor_error",
+    "tank_level_low",
 )
 
 
@@ -21,6 +22,9 @@ class AlertRule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     zone_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("zones.id", ondelete="CASCADE"), nullable=True
+    )
+    tank_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("water_tanks.id", ondelete="CASCADE"), nullable=True
     )
     threshold: Mapped[float | None] = mapped_column(Float, nullable=True)
     cooldown_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
