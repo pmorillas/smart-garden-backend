@@ -19,6 +19,8 @@ class ZoneStatus:
         self.tank_id = tank_id
         self.soil_humidity_avg: Optional[float] = None
         self.soil_humidity_values: list[float] = []
+        self.soil_raw_values: list[int] = []
+        self.reading_seq: int = 0  # incremented on each new reading, used for change detection
         self.is_watering: bool = False
         self.last_watered_at: Optional[str] = None
         self.active_event_id: Optional[int] = None

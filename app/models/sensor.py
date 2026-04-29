@@ -20,6 +20,7 @@ class SensorReading(Base):
     )
     sensor_type: Mapped[str] = mapped_column(String(30), nullable=False)
     value: Mapped[float] = mapped_column(Float, nullable=False)
+    raw_value: Mapped[float | None] = mapped_column(Float, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),

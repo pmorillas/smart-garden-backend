@@ -89,12 +89,86 @@ async def _build_hardware_config(device_id: int, db) -> dict:
     }
 
 
-async def _persist_soil_reading(zone_id: int, value: float, timestamp: datetime) -> None:
+def _compute_soil_pct(raw: int, dry: int, wet: int) -> float:
+    """Convert raw ADC to humidity percentage using calibration values."""
+    if dry == wet:
+        return 0.0
+    pct = 100.0 * (dry - raw) / (dry - wet)
+    return max(0.0, min(100.0, pct))
+
+
+async def _get_zone_soil_calibration(zone_id: int) -> tuple[list[int], int, int]:
+    """Return (sorted peripheral_ids, zone_dry_default, zone_wet_default) for a zone."""
+    from sqlalchemy import select
+    from app.database import AsyncSessionLocal
+    from app.models.peripheral import Peripheral, ZoneSoilSensor
+    from app.models.zone import ZoneConfig
+
+    async with AsyncSessionLocal() as db:
+        soil_result = await db.execute(
+            select(ZoneSoilSensor)
+            .where(ZoneSoilSensor.zone_id == zone_id)
+            .order_by(ZoneSoilSensor.order_index)
+        )
+        soil_rows = soil_result.scalars().all()
+        peripheral_ids = [row.peripheral_id for row in soil_rows]
+
+        cfg_result = await db.execute(select(ZoneConfig).where(ZoneConfig.zone_id == zone_id))
+        cfg = cfg_result.scalar_one_or_none()
+        zone_dry = cfg.soil_dry_value if cfg else 3800
+        zone_wet = cfg.soil_wet_value if cfg else 1200
+
+        return peripheral_ids, zone_dry, zone_wet
+
+
+async def _calibrate_raw_soil(zone_id: int, raw_values: list[int]) -> tuple[list[float], float]:
+    """Convert raw ADC values to calibrated percentages using per-peripheral or zone defaults."""
+    from sqlalchemy import select
+    from app.database import AsyncSessionLocal
+    from app.models.peripheral import Peripheral, ZoneSoilSensor
+    from app.models.zone import ZoneConfig
+
+    async with AsyncSessionLocal() as db:
+        soil_result = await db.execute(
+            select(ZoneSoilSensor)
+            .where(ZoneSoilSensor.zone_id == zone_id)
+            .order_by(ZoneSoilSensor.order_index)
+        )
+        soil_rows = soil_result.scalars().all()
+
+        cfg_result = await db.execute(select(ZoneConfig).where(ZoneConfig.zone_id == zone_id))
+        cfg = cfg_result.scalar_one_or_none()
+        zone_dry = cfg.soil_dry_value if cfg else 3800
+        zone_wet = cfg.soil_wet_value if cfg else 1200
+
+        pct_values: list[float] = []
+        for i, raw in enumerate(raw_values):
+            dry, wet = zone_dry, zone_wet
+            if i < len(soil_rows):
+                p = await db.get(Peripheral, soil_rows[i].peripheral_id)
+                if p and p.extra_config:
+                    cal_e = p.extra_config.get("cal_empty")
+                    cal_f = p.extra_config.get("cal_full")
+                    if cal_e is not None and cal_f is not None:
+                        dry, wet = int(cal_e), int(cal_f)
+            pct_values.append(round(_compute_soil_pct(raw, dry, wet), 1))
+
+        avg = round(sum(pct_values) / len(pct_values), 1) if pct_values else 0.0
+        return pct_values, avg
+
+
+async def _persist_soil_reading(zone_id: int, value: float, timestamp: datetime, raw_value: float | None = None) -> None:
     from app.database import AsyncSessionLocal
     from app.models import SensorReading
 
     async with AsyncSessionLocal() as db:
-        db.add(SensorReading(zone_id=zone_id, sensor_type="soil_humidity", value=value, timestamp=timestamp))
+        db.add(SensorReading(
+            zone_id=zone_id,
+            sensor_type="soil_humidity",
+            value=value,
+            raw_value=raw_value,
+            timestamp=timestamp,
+        ))
         await db.commit()
 
 
@@ -447,24 +521,50 @@ class MqttClient:
             if zone is None:
                 return
 
-            values = payload.get("values")
-            if isinstance(values, list) and values:
-                avg = sum(values) / len(values)
-                zone.soil_humidity_values = [round(v, 1) for v in values]
+            raw_values = payload.get("raw_values")
+            legacy_values = payload.get("values")
+
+            if isinstance(raw_values, list) and raw_values:
+                # New format: raw ADC values — backend does calibration
+                zone.soil_raw_values = [int(round(v)) for v in raw_values]
+                zone.reading_seq += 1
+
+                async def _process_raw(zone_id=zone_id, raw_values=raw_values, zone=zone, now=now):
+                    pct_values, avg = await _calibrate_raw_soil(zone_id, [int(round(v)) for v in raw_values])
+                    zone.soil_humidity_values = pct_values
+                    zone.soil_humidity_avg = round(avg, 1)
+                    raw_avg = sum(raw_values) / len(raw_values)
+                    await _persist_soil_reading(zone_id, round(avg, 1), now, raw_value=round(raw_avg, 1))
+                    await _check_humidity_alert(zone_id, avg)
+
+                asyncio.run_coroutine_threadsafe(_process_raw(), self._loop)
+
+            elif isinstance(legacy_values, list) and legacy_values:
+                # Legacy format: pre-calibrated % values from old firmware
+                avg = sum(legacy_values) / len(legacy_values)
+                zone.soil_humidity_values = [round(v, 1) for v in legacy_values]
+                zone.soil_humidity_avg = round(avg, 1)
+                zone.reading_seq += 1
+                asyncio.run_coroutine_threadsafe(
+                    _persist_soil_reading(zone_id, round(avg, 1), now), self._loop
+                )
+                asyncio.run_coroutine_threadsafe(
+                    _check_humidity_alert(zone_id, avg), self._loop
+                )
             elif "humidity_pct" in payload:
-                avg = payload["humidity_pct"]
+                avg = float(payload["humidity_pct"])
                 zone.soil_humidity_values = [round(avg, 1)]
+                zone.soil_humidity_avg = round(avg, 1)
+                zone.reading_seq += 1
+                asyncio.run_coroutine_threadsafe(
+                    _persist_soil_reading(zone_id, round(avg, 1), now), self._loop
+                )
+                asyncio.run_coroutine_threadsafe(
+                    _check_humidity_alert(zone_id, avg), self._loop
+                )
             else:
                 return
 
-            zone.soil_humidity_avg = avg
-
-            asyncio.run_coroutine_threadsafe(
-                _persist_soil_reading(zone_id, avg, now), self._loop
-            )
-            asyncio.run_coroutine_threadsafe(
-                _check_humidity_alert(zone_id, avg), self._loop
-            )
             if mac:
                 asyncio.run_coroutine_threadsafe(
                     _update_device_last_seen(mac), self._loop

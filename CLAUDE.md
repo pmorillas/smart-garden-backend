@@ -70,7 +70,7 @@ zones
   id, device_id, name, active, relay_pin_local, soil_pin_a_local, soil_pin_b_local
 
 sensor_readings
-  id, zone_id, sensor_type (soil_humidity | ambient_temperature | ambient_humidity | light_lux), value, timestamp
+  id, zone_id, sensor_type (soil_humidity | ambient_temperature | ambient_humidity | light_lux), value, raw_value (nullable), timestamp
 
 watering_events
   id, zone_id, program_id, started_at, ended_at, trigger_type, duration_seconds
@@ -97,7 +97,8 @@ firmware_updates
 
 | Direcció | Topic | Payload (JSON) |
 |---|---|---|
-| ESP32 → Backend | `smartgarden/sensors/soil/{zone_id}` | `{"zone_id":1,"values":[42],"mac":"...","timestamp":...}` |
+| ESP32 → Backend | `smartgarden/sensors/soil/{zone_id}` | `{"zone_id":1,"raw_values":[2100],"mac":"...","timestamp":...}` (firmware≥1.4.0) |
+| ESP32 → Backend | `smartgarden/sensors/soil/{zone_id}` | `{"zone_id":1,"values":[42],"mac":"...","timestamp":...}` (legacy, < 1.4.0) |
 | ESP32 → Backend | `smartgarden/sensors/ambient` | `{"temp":22.5,"humidity":60,"light_lux":1200,"mac":"..."}` |
 | ESP32 → Backend | `smartgarden/devices/register` | `{"mac":"...","ip":"...","firmware":"1.1.0"}` (retained) |
 | ESP32 → Backend | `smartgarden/devices/ota_status` | `{"mac":"...","status":"success","version":"1.2.0"}` |
