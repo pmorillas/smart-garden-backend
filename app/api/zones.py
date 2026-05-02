@@ -104,6 +104,60 @@ async def create_zone(body: ZoneCreate, db: AsyncSession = Depends(get_db)):
     return _zone_to_dict(zone)
 
 
+@router.get("/watering-events")
+async def list_watering_events(
+    zone_id: int | None = None,
+    page: int = 1,
+    page_size: int = 15,
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import func, and_
+
+    filters = []
+    if zone_id is not None:
+        filters.append(WateringEvent.zone_id == zone_id)
+
+    total_result = await db.execute(
+        select(func.count()).select_from(WateringEvent).where(and_(*filters) if filters else True)
+    )
+    total = total_result.scalar_one()
+
+    offset = (page - 1) * page_size
+    events_result = await db.execute(
+        select(WateringEvent)
+        .where(and_(*filters) if filters else True)
+        .order_by(WateringEvent.started_at.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
+    events = events_result.scalars().all()
+
+    zone_ids = {e.zone_id for e in events}
+    zones_result = await db.execute(select(Zone).where(Zone.id.in_(zone_ids)))
+    zones_map = {z.id: z.name for z in zones_result.scalars().all()}
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": max(1, -(-total // page_size)),
+        "items": [
+            {
+                "id": e.id,
+                "zone_id": e.zone_id,
+                "zone_name": zones_map.get(e.zone_id, f"Zona {e.zone_id}"),
+                "started_at": e.started_at.isoformat(),
+                "ended_at": e.ended_at.isoformat() if e.ended_at else None,
+                "duration_seconds": e.duration_seconds,
+                "trigger_type": e.trigger_type,
+                "outcome": e.outcome,
+                "skip_reason": e.skip_reason,
+            }
+            for e in events
+        ],
+    }
+
+
 @router.get("/{zone_id}")
 async def get_zone(zone_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
